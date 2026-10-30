@@ -1,0 +1,7 @@
+{
+  "name": "Disklens",
+  "slug": "disklens",
+  "identifier": "dev.disklens.desktop",
+  "version": "0.1.0",
+  "out": "build"
+}
