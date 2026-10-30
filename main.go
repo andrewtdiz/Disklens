@@ -1,3 +1,5 @@
+//go:build !cli
+
 package main
 
 import (
@@ -7,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -14,47 +17,49 @@ import (
 )
 
 type scanResult struct {
-	scan     *Scan
-	baseline *Snapshot
-	err      error
-	notice   string
-	saved    bool
+	scan   *Scan
+	state  *SnapshotState
+	reset  bool
+	err    error
+	notice string
+	saved  bool
 }
 
 type app struct {
-	win                 *mygo.Window
-	settings            Settings
-	depth               float64
-	split               float32
-	scan                *Scan
-	focus               *Node
-	selected            *Node
-	hover               *Node
-	outline             ui.OutlineState[*Node]
-	row                 int
-	files               ui.ListState
-	fileRow             int
-	largest             []*Node
-	tab                 int
-	busy                bool
-	cancel              context.CancelFunc
-	results             chan scanResult
-	progress            chan ScanProgress
-	scanProgress        ScanProgress
-	scanStarted         time.Time
-	status              string
-	baseline            string
-	tiles               []tile
-	mapRoot             *Node
-	mapWidth, mapHeight float32
-	selectionTrail      []*Node
-	wheelRemainder      float32
-	mapBitmap           *ui.Bitmap
+	deleteRequest           *folderDeletion
+	deleteConfirm, deleting bool
+	deleteResults           chan error
+	win                     *mygo.Window
+	settings                Settings
+	depthText               string
+	depth                   float64
+	split                   float32
+	scan                    *Scan
+	focus                   *Node
+	selected                *Node
+	hover                   *Node
+	outline                 ui.OutlineState[*Node]
+	row                     int
+	busy                    bool
+	cancel                  context.CancelFunc
+	results                 chan scanResult
+	progress                chan ScanProgress
+	scanProgress            ScanProgress
+	scanStarted             time.Time
+	status                  string
+	savedState              *SnapshotState
+	baseline                string
+	tiles                   []tile
+	mapRoot                 *Node
+	mapWidth, mapHeight     float32
+	selectionTrail          []*Node
+	wheelRemainder          float32
+	mapBitmap               *ui.Bitmap
 }
 
 func newApp() *app {
 	home, _ := os.UserHomeDir()
-	a := &app{settings: Settings{Path: home, Depth: 5}, split: 50, row: 0, fileRow: -1, status: "Choose a folder, then Refresh to scan."}
+	a := &app{settings: Settings{Path: home, Depth: 5}, split: 50, row: 0, status: "Choose a folder, then Refresh to scan."}
 	if b, err := os.ReadFile(filepath.Join(dataDirectory(), "settings.json")); err == nil {
 		_ = json.Unmarshal(b, &a.settings)
 	}
@@ -62,16 +67,21 @@ func newApp() *app {
 		a.settings.Depth = 5
 	}
 	a.depth = float64(a.settings.Depth)
+	a.depthText = strconv.Itoa(a.settings.Depth)
 	a.outline.List.Selected = &a.row
-	a.files.Selected = &a.fileRow
 	return a
 }
 
-func (a *app) start(diff bool) {
-	if a.busy {
+func (a *app) start() {
+	if a.busy || a.deleteConfirm {
 		return
 	}
 	path, err := filepath.Abs(filepath.Clean(a.settings.Path))
+	if err != nil {
+		a.status = err.Error()
+		return
+	}
+	scanLock, err := beginScan(path)
 	if err != nil {
 		a.status = err.Error()
 		return
@@ -88,6 +98,7 @@ func (a *app) start(diff bool) {
 	a.cancel = cancel
 	results, progress, depth := a.results, a.progress, a.settings.Depth
 	go func() {
+		defer scanLock.Close()
 		publish := func(p ScanProgress) {
 			select {
 			case <-progress:
@@ -98,14 +109,10 @@ func (a *app) start(diff bool) {
 			default:
 			}
 		}
-		old, loadErr := loadSnapshot(path)
+		state, loadErr := loadSnapshotState(path)
 		s, err := walkDirectory(ctx, path, publish)
 		if err == nil {
 			err = ctx.Err()
-		}
-		if err == nil {
-			publish(ScanProgress{Phase: "Preparing results", Path: path, Files: s.Files, Folders: s.Folders, Bytes: s.Bytes, Errors: s.Errors, Skipped: s.Skipped})
-			s.Largest, err = largestFiles(ctx, s.Root)
 		}
 		r := scanResult{scan: s, err: err}
 		if err == nil {
@@ -117,20 +124,18 @@ func (a *app) start(diff bool) {
 				p := ScanProgress{Phase: "Preparing snapshot", Path: path, Files: s.Files, Folders: s.Folders, Bytes: s.Bytes}
 				publish(p)
 				next := takeSnapshot(s, depth)
-				if diff && old != nil {
-					p.Phase = "Comparing snapshots"
-					publish(p)
-					compare(s.Root, old)
-					r.baseline = old
-				}
-				p.Phase = "Saving snapshot"
-				publish(p)
-				if err := saveJSON(snapshotPath(path), next); err != nil {
-					r.notice = "Snapshot could not be saved: " + err.Error()
+				next.At = time.Now()
+				state.Latest = next
+				if ctx.Err() != nil {
+					r.err = ctx.Err()
 				} else {
-					r.saved = true
-					if diff && old == nil {
-						r.notice = "First snapshot saved · Refresh+ again to compare"
+					p.Phase = "Saving scan"
+					publish(p)
+					if err := saveJSON(snapshotPath(path), state); err != nil {
+						r.notice = "Scan could not be saved: " + err.Error()
+					} else {
+						r.saved, r.state = true, state
+						compareSaved(s.Root, state)
 					}
 				}
 			}
@@ -142,7 +147,32 @@ func (a *app) start(diff bool) {
 	}()
 }
 
+func (a *app) setBaseline() {
+	if a.busy || a.savedState == nil || a.scan == nil || a.scan.Errors != 0 {
+		return
+	}
+	state := &SnapshotState{Version: 1, Latest: a.savedState.Latest, Baseline: a.savedState.Latest}
+	a.busy = true
+	a.scanStarted = time.Now()
+	a.scanProgress = ScanProgress{Phase: "Setting baseline", Path: state.Latest.Root}
+	a.results, a.progress = make(chan scanResult, 1), make(chan ScanProgress, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
+	results, scan := a.results, a.scan
+	go func() {
+		err := ctx.Err()
+		if err == nil {
+			err = saveJSON(snapshotPath(state.Latest.Root), state)
+		}
+		results <- scanResult{scan: scan, state: state, saved: err == nil, reset: true, err: err}
+	}()
+}
+
 func (a *app) poll(c *ui.Context) {
+	if a.deleting {
+		a.pollDeletion(c)
+		return
+	}
 	if !a.busy {
 		return
 	}
@@ -167,16 +197,21 @@ func (a *app) poll(c *ui.Context) {
 		a.hover, a.mapRoot = nil, nil
 		a.selectionTrail = nil
 		a.outline = ui.OutlineState[*Node]{}
-		a.row, a.fileRow = 0, -1
+		a.row = 0
 		a.outline.List.Selected = &a.row
 		a.outline.Open.Add(a.scan.Root)
-		a.largest = a.scan.Largest
-		a.baseline = "Snapshot not saved"
+		a.savedState = r.state
+		a.baseline = "Scan not saved"
 		if r.saved {
-			a.baseline = "Snapshot saved · depth " + fmt.Sprint(a.settings.Depth)
+			a.baseline = "No baseline - scan saved" + fmt.Sprintf(" - depth %d", r.state.Latest.Depth)
 		}
-		if r.baseline != nil {
-			a.baseline = "Compared with " + r.baseline.At.Format("Jan 2, 15:04:05") + fmt.Sprintf(" · depth %d", r.baseline.Depth)
+		if r.state != nil && r.state.Baseline != nil {
+			a.baseline = "Compared with " + r.state.Baseline.At.Format("Jan 2, 15:04:05") + fmt.Sprintf(" - depth %d", min(r.state.Baseline.Depth, r.state.Latest.Depth))
+		}
+		if r.reset {
+			clearComparison(a.scan.Root)
+			compareSaved(a.scan.Root, r.state)
+			a.baseline = "Baseline set " + r.state.Baseline.At.Format("Jan 2, 15:04:05") + fmt.Sprintf(" - depth %d", r.state.Baseline.Depth)
 		}
 		if r.scan.Errors > 0 {
 			a.baseline = "Partial scan · comparison unavailable"
@@ -209,10 +244,7 @@ func (a *app) view(c *ui.Context) {
 	c.SetTheme(theme())
 	a.poll(c)
 	if c.Shortcut(ui.Cmd, ui.KeyR) {
-		a.start(false)
-	}
-	if c.Shortcut(ui.Cmd|ui.Shift, ui.KeyR) {
-		a.start(true)
+		a.start()
 	}
 	ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
 		a.toolbar(c)
@@ -222,8 +254,8 @@ func (a *app) view(c *ui.Context) {
 			if a.busy {
 				p := a.scanProgress
 				value := p.Fraction
-				label := "Scanning"
-				if p.Phase != "Scanning" {
+				label := p.Phase
+				if p.Phase != "Scanning" && p.Phase != "Reading NTFS" {
 					value = -1
 					label = p.Phase
 				}
@@ -232,10 +264,18 @@ func (a *app) view(c *ui.Context) {
 				meterTheme := *previousTheme
 				meterTheme.Accent = ui.Hex("#60a5fa")
 				c.SetTheme(&meterTheme)
-				ui.Progress(c.Key("scan-meter"), value).Grow(1).Height(8).Tooltip(fmt.Sprintf("%s\n%d files | %s found\nEstimated traversal progress; branches vary in size", p.Path, p.Files, formatSize(p.Bytes)))
+				detail := fmt.Sprintf("%s\n%d files | %s found\nEstimated traversal progress; branches vary in size", p.Path, p.Files, formatSize(p.Bytes))
+				if p.Phase == "Reading NTFS" {
+					detail = "Reading NTFS metadata for " + p.Path
+				}
+				ui.Progress(c.Key("scan-meter"), value).Grow(1).Height(8).Tooltip(detail)
 				c.SetTheme(previousTheme)
 				if value >= 0 {
-					ui.Text(c.Key("scan-percent"), fmt.Sprintf("~%.0f%%", min(value*100, 99))).FontSize(11).Width(42).SingleLine()
+					percent := fmt.Sprintf("~%.0f%%", min(value*100, 99))
+					if p.Phase == "Reading NTFS" {
+						percent = fmt.Sprintf("%.0f%%", value*100)
+					}
+					ui.Text(c.Key("scan-percent"), percent).FontSize(11).Width(42).SingleLine()
 				}
 				ui.Text(c, time.Since(a.scanStarted).Truncate(time.Second).String()).FontSize(11).TextColor(c.Theme().TextMuted).Width(55).SingleLine()
 				return
@@ -246,43 +286,81 @@ func (a *app) view(c *ui.Context) {
 			} else {
 				label.Tooltip(text)
 			}
-			ui.Text(c, "LOCAL ONLY").FontSize(10).TextColor(c.Theme().TextMuted)
+			backend := "LOCAL ONLY"
+			detail := ""
+			if a.scan != nil && a.scan.Backend != "" {
+				backend = a.scan.Backend
+				detail = a.scan.FallbackReason
+			}
+			ui.Text(c, backend).FontSize(10).TextColor(c.Theme().TextMuted).Tooltip(detail)
 		})
 	})
+	a.deletionDialog(c)
 }
 
 func (a *app) toolbar(c *ui.Context) {
-	ui.Row(c).Height(68).Padding(14, 18).Gap(10).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(c.Theme().Border).Children(func() {
-		ui.Text(c, "Disklens").Bold().FontSize(19).Width(110)
-		if ui.TextInput(c.Key("path"), &a.settings.Path).Label("Folder path").Placeholder("Folder path").Grow(1).Disabled(a.busy).Submitted() {
-			a.start(false)
+	previousTheme := c.Theme()
+	compact := *previousTheme
+	compact.FontSize, compact.Spacing, compact.Radius = 12, 2.5, 2
+	c.SetTheme(&compact)
+	defer c.SetTheme(previousTheme)
+	ui.Row(c.Key("toolbar")).Height(38).Padding(5, 8).Gap(6).AlignItems(ui.Center).BorderWidth(0, 0, 1, 0).BorderColor(c.Theme().Border).Children(func() {
+		if ui.TextInput(c.Key("path"), &a.settings.Path).Label("Folder path").Placeholder("Folder path").Height(26).Grow(1).Disabled(a.busy).Submitted() {
+			a.start()
 		}
-		if ui.Button(c.Key("browse"), "…").Label("Choose folder").Width(34).Disabled(a.busy).Clicked() {
+		if toolbarButton(c.Key("browse"), "", "Choose folder", folderIcon, 28).Disabled(a.busy).Clicked() {
 			paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.win, Title: "Choose a folder to scan", DefaultPath: a.settings.Path, Directory: true, ShowHiddenFiles: true, TreatPackagesAsDirectories: true})
 			if err != nil {
 				a.status = err.Error()
 			} else if len(paths) > 0 {
 				a.settings.Path = paths[0]
-				a.status = "Folder selected · Refresh to scan, or Refresh+ to compare"
+				a.status = "Folder selected - Refresh to scan"
 			}
 		}
 		ui.Text(c, "Depth").FontSize(12).TextColor(c.Theme().TextMuted)
-		if ui.NumberInput(c.Key("depth"), &a.depth, 1, 50, 1).Label("Snapshot depth").Width(180).Disabled(a.busy).Tooltip("Directory levels saved, below the scan root. Applies to the next snapshot.").Changed() {
+		previousDepth := a.depth
+		input := ui.TextInput(c.Key("depth"), &a.depthText).Label("Snapshot depth").Width(36).Height(26).Disabled(a.busy).Tooltip("Directory levels saved below the scan root (1-50).")
+		if input.Changed() {
+			if value, err := strconv.Atoi(a.depthText); err == nil && value >= 1 && value <= 50 {
+				a.depth = float64(value)
+			}
+		}
+		if toolbarButton(c.Key("depth-down"), "", "Decrease depth", minusIcon, 26).Disabled(a.busy || a.depth <= 1).Clicked() || input.Shortcut(0, ui.KeyDown) {
+			a.depth = max(1, a.depth-1)
+			a.depthText = strconv.Itoa(int(a.depth))
+		}
+		if toolbarButton(c.Key("depth-up"), "", "Increase depth", plusIcon, 26).Disabled(a.busy || a.depth >= 50).Clicked() || input.Shortcut(0, ui.KeyUp) {
+			a.depth = min(50, a.depth+1)
+			a.depthText = strconv.Itoa(int(a.depth))
+		}
+		if !input.Focused() {
+			a.depthText = strconv.Itoa(int(a.depth))
+		}
+		if a.depth != previousDepth {
 			a.settings.Depth = int(a.depth)
 			if err := saveJSON(filepath.Join(dataDirectory(), "settings.json"), a.settings); err != nil {
 				a.status = err.Error()
 			}
 		}
-		if a.busy {
-			if ui.Button(c.Key("cancel"), "Cancel scan").Width(200).Clicked() {
+		if a.deleting {
+			ui.Button(c, "Deleting...").Width(184).Height(26).Disabled(true)
+		} else if a.busy {
+			if ui.Button(c.Key("cancel"), "Cancel scan").Width(184).Height(26).Padding(0, 8).Clicked() {
 				a.cancel()
 			}
 		} else {
-			if ui.Button(c.Key("refresh"), "↻  Refresh").Width(99).Tooltip("Scan and save a new baseline · Ctrl/Cmd+R").Clicked() {
-				a.start(false)
+			if toolbarButton(c.Key("refresh"), "Refresh", "Refresh", refreshIcon, 84).Tooltip("Scan and compare with the fixed baseline - Ctrl/Cmd+R").Clicked() {
+				a.start()
 			}
-			if ui.Button(c.Key("refresh-plus"), "↻  Refresh+").Width(104).Background(ui.Hex("#fafafa")).TextColor(ui.Hex("#292929")).Tooltip("Compare with the last saved scan, then save this scan · Ctrl/Cmd+Shift+R").Clicked() {
-				a.start(true)
+			canSet := a.savedState != nil && a.scan != nil && a.scan.Errors == 0
+			path, err := filepath.Abs(filepath.Clean(a.settings.Path))
+			canSet = canSet && err == nil && snapshotPath(path) == snapshotPath(a.scan.Root.Path)
+			hint := "Complete a scan before setting its baseline"
+			if canSet {
+				hint = "Use the saved scan from " + a.savedState.Latest.At.Format("Jan 2, 15:04:05") + " as the baseline for " + a.scan.Root.Path
+			}
+			if ui.Button(c.Key("set-baseline"), "Set baseline").Height(26).Width(100).Padding(0, 6).Disabled(!canSet).Tooltip(hint).Clicked() {
+				a.setBaseline()
 			}
 		}
 	})
@@ -297,20 +375,6 @@ func (a *app) tree(c *ui.Context) {
 	defer c.SetTheme(previousTheme)
 	ui.Column(c).Fill().FontSize(12).Children(func() {
 		ui.Row(c).Height(28).Padding(2, 6).AlignItems(ui.Center).Gap(4).Children(func() {
-			all := ui.Button(c.Key("all-files"), "All files").FontSize(12)
-			if a.tab == 0 {
-				all.Background(ui.Hex("#383838"))
-			}
-			if all.Clicked() {
-				a.tab = 0
-			}
-			large := ui.Button(c.Key("largest-files"), "Largest files").FontSize(12)
-			if a.tab == 1 {
-				large.Background(ui.Hex("#383838"))
-			}
-			if large.Clicked() {
-				a.tab = 1
-			}
 			ui.Box(c).Grow(1)
 			ui.Text(c, a.baseline).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
 		})
@@ -318,40 +382,30 @@ func (a *app) tree(c *ui.Context) {
 			ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
 				ui.Text(c, "See where your space goes.").FontSize(22)
 				ui.Text(c, "Choose a directory above and press Refresh.").TextColor(c.Theme().TextMuted)
-				ui.Text(c, "Refresh+ highlights changes since your last saved scan.").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "Set a baseline after scanning. Refresh compares future scans against it.").FontSize(12).TextColor(c.Theme().TextMuted)
 			})
 			return
 		}
 		cols := []ui.TableColumn{{Title: "Name", MinWidth: 240}, {Title: "Size Proportion", Width: 120}, {Title: "Physical Size", Width: 125, Align: ui.End}, {Title: "Change", Width: 110, Align: ui.End}, {Title: "Last Change", Width: 160}}
 		a.outline.Indent = 16
-		if a.tab == 0 {
-			before := a.row
-			e := ui.OutlineTable(c.Key("file-tree"), &a.outline, cols, []*Node{a.scan.Root}, func(n *Node) []*Node { return n.Children }, func(n *Node, col int) { a.cell(c, n, col) }).Grow(1).Label("Directory explorer")
-			if a.row != before {
-				a.selected = a.outline.Item(a.row)
-				a.selectionTrail = nil
-			}
-			if e.Submitted() {
-				n := a.outline.Item(a.row)
-				if n != nil && n.Dir {
-					if a.outline.Open.Has(n) {
-						a.outline.Open.Remove(n)
-					} else {
-						a.outline.Open.Add(n)
-					}
-					a.selected = n
+		before := a.row
+		e := ui.OutlineTable(c.Key("file-tree"), &a.outline, cols, []*Node{a.scan.Root}, func(n *Node) []*Node { return n.Children }, func(n *Node, col int) { a.folderMenu(c, n, col) }).Grow(1).Label("Directory explorer")
+		if a.row != before {
+			a.selected = a.outline.Item(a.row)
+			a.selectionTrail = nil
+		}
+		if e.Submitted() {
+			n := a.outline.Item(a.row)
+			if n != nil && n.Dir {
+				if a.outline.Open.Has(n) {
+					a.outline.Open.Remove(n)
+				} else {
+					a.outline.Open.Add(n)
 				}
-			}
-		} else {
-			before := a.fileRow
-			e := ui.Table(c.Key("largest-table"), &a.files, cols, len(a.largest), func(row, col int) { a.cell(c, a.largest[row], col) }).Grow(1).Label("100 largest files")
-			if a.fileRow != before && a.fileRow >= 0 && a.fileRow < len(a.largest) {
-				a.selected = a.largest[a.fileRow]
-			}
-			if e.Submitted() && a.selected != nil {
-				a.focus = a.selected.Parent
+				a.selected = n
 			}
 		}
+
 	})
 }
 
@@ -421,7 +475,6 @@ func (a *app) selectNode(n *Node) {
 	for p := n.Parent; p != nil; p = p.Parent {
 		a.outline.Open.Add(p)
 	}
-	a.tab = 0
 	var find func(*Node) bool
 	row := 0
 	find = func(p *Node) bool {
@@ -444,12 +497,26 @@ func (a *app) selectNode(n *Node) {
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "diff" || os.Args[1] == "--help" || os.Args[1] == "-h") {
+		os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
+	}
+	ready, err := prepareDesktop()
+	if err != nil {
+		log.Print(err)
+	}
+	if !ready {
+		return
+	}
+	var folder string
+	if len(os.Args) > 1 {
+		folder = os.Args[1]
+	}
 	a := newApp()
 	mygo.App.WhenReady(func() {
-		a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Disklens", Width: 1280, Height: 860, MinWidth: 940, MinHeight: 580, Content: ui.View(a.view)})
-		if len(os.Args) > 1 {
-			a.settings.Path = os.Args[1]
-			a.start(false)
+		a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Disklens", BackgroundColor: "#202020", Width: 1280, Height: 860, MinWidth: 940, MinHeight: 580, Content: ui.View(a.view)})
+		if folder != "" {
+			a.settings.Path = folder
+			a.start()
 		}
 	})
 	if err := mygo.App.Run(); err != nil {

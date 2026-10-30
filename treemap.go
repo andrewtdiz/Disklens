@@ -1,3 +1,5 @@
+//go:build !cli
+
 package main
 
 import (
@@ -97,19 +99,6 @@ func contains(r ui.Rect, x, y float32) bool {
 
 func (a *app) mapView(c *ui.Context) {
 	ui.Column(c).Fill().Children(func() {
-		ui.Row(c).Height(42).Padding(4, 14).Gap(10).AlignItems(ui.Center).Children(func() {
-			if ui.Button(c.Key("map-up"), "↑").Label("Treemap parent").Width(30).Disabled(a.focus == nil || a.focus.Parent == nil).Clicked() {
-				a.focus = a.focus.Parent
-			}
-			path := "Treemap"
-			if a.focus != nil {
-				path = a.focus.Path
-			}
-			if ui.Button(c.Key("map-root"), "Root").Disabled(a.scan == nil || a.focus == a.scan.Root).Clicked() {
-				a.focus = a.scan.Root
-			}
-			ui.Text(c, path).SingleLine().Grow(1).FontSize(12).Tooltip(path)
-		})
 		box := ui.Box(c.Key("treemap")).Grow(1).Clip().Background(ui.Hex("#252525")).Label("Disk usage treemap")
 		box.HandleInput(func(ev ui.InputEvent) bool {
 			if ev.Kind != ui.InputScroll || ev.DY == 0 {

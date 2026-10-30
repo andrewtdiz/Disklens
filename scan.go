@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,6 +26,8 @@ type Node struct {
 }
 
 type Scan struct {
+	Backend          string
+	FallbackReason   string
 	Fraction         float64
 	Bytes            int64
 	Root             *Node
@@ -37,7 +37,6 @@ type Scan struct {
 	Errors           int
 	FirstError       string
 	At               time.Time
-	Largest          []*Node
 	DirectoryBatches int
 	FileQueries      int
 }
@@ -57,88 +56,6 @@ type Snapshot struct {
 type Settings struct {
 	Path  string `json:"path"`
 	Depth int    `json:"depth"`
-}
-
-func walkDirectoryPortable(ctx context.Context, path string, progress func(ScanProgress)) (*Scan, error) {
-	path, err := filepath.Abs(filepath.Clean(path))
-	if err != nil {
-		return nil, err
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() || skipEntry(info) {
-		return nil, errors.New("Choose a real directory, not a symbolic link or reparse point")
-	}
-	s := &Scan{At: time.Now()}
-	report := scanReporter(s, progress)
-	seen := map[string]bool{}
-	var walk func(string, os.FileInfo, *Node, float64, float64) (*Node, error)
-	walk = func(path string, info os.FileInfo, parent *Node, start, span float64) (*Node, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		n := &Node{Name: info.Name(), Path: path, Dir: info.IsDir(), Modified: info.ModTime(), Parent: parent}
-		if !n.Dir {
-			s.Files++
-			s.FileQueries++
-			size, identity, err := diskSize(path, info)
-			if err != nil {
-				s.recordError(path, err)
-				return n, nil
-			}
-			if identity == "" || !seen[identity] {
-				n.Size = size
-				if identity != "" {
-					seen[identity] = true
-				}
-			}
-			s.Bytes += n.Size
-			if s.Files%256 == 0 {
-				report(filepath.Dir(path), false)
-			}
-			return n, nil
-		}
-		s.Folders++
-		report(path, false)
-		s.DirectoryBatches++
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			s.recordError(path, err)
-			return n, nil
-		}
-		for i, entry := range entries {
-			s.Fraction = start + span*float64(i)/float64(len(entries))
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			childPath := filepath.Join(path, entry.Name())
-			childInfo, err := entry.Info()
-			if err != nil {
-				s.recordError(childPath, err)
-				continue
-			}
-			if skipEntry(childInfo) || (!childInfo.IsDir() && !childInfo.Mode().IsRegular()) {
-				s.Skipped++
-				continue
-			}
-			child, err := walk(childPath, childInfo, n, s.Fraction, span/float64(len(entries)))
-			if err != nil {
-				return nil, err
-			}
-			n.Children = append(n.Children, child)
-			n.Size += child.Size
-		}
-		sortNodes(n.Children)
-		return n, nil
-	}
-	s.Root, err = walk(path, info, nil, 0, 1)
-	if err == nil {
-		s.Fraction = 1
-	}
-	report(path, true)
-	return s, err
 }
 
 func (s *Scan) recordError(path string, err error) {
@@ -239,21 +156,6 @@ func snapshotPath(root string) string {
 	return filepath.Join(dataDirectory(), "snapshots", fmt.Sprintf("%x.json", sha256.Sum256([]byte(root))))
 }
 
-func loadSnapshot(root string) (*Snapshot, error) {
-	b, err := os.ReadFile(snapshotPath(root))
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var s Snapshot
-	if err := json.Unmarshal(b, &s); err != nil {
-		return nil, err
-	}
-	return &s, nil
-}
-
 func saveJSON(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -262,7 +164,19 @@ func saveJSON(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0600)
+	file, err := os.CreateTemp(filepath.Dir(path), ".disklens-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err = file.Write(b); err != nil {
+		file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 func formatSize(n int64) string {

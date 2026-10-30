@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -49,7 +50,7 @@ func TestDesktopBatchedDirectory(t *testing.T) {
 	c, _ := launch(t, exe, data, filepath.Join(base, "batch.sock"))
 	c.value("path", root)
 	c.press("refresh")
-	c.waitFor("Snapshot saved · depth 5")
+	c.waitFor("No baseline - scan saved - depth 5")
 	c.waitFor("702 files")
 	c.waitFor("1 links / special entries skipped")
 	paths, _ := filepath.Glob(filepath.Join(data, "snapshots", "*.json"))
@@ -63,7 +64,7 @@ func TestDesktopBatchedDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = json.Unmarshal(b, &snap); err != nil {
+	if err = json.Unmarshal(savedLatest(t, b), &snap); err != nil {
 		t.Fatal(err)
 	}
 	if snap.Directories["."].Size != 701*4096 || snap.Directories["Batch"].Size != 700*4096 {
@@ -166,7 +167,7 @@ func launch(t *testing.T, exe, data, sock string) (*client, *exec.Cmd) {
 				var windows struct{ Windows []any }
 				json.Unmarshal(c.call("windows", nil), &windows)
 				if len(windows.Windows) > 0 {
-					c.waitFor("Disklens")
+					c.waitFor("Folder path")
 					return c, cmd
 				}
 				time.Sleep(50 * time.Millisecond)
@@ -194,7 +195,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	c, process := launch(t, exe, data, filepath.Join(base, "app.sock"))
 	c.value("path", root)
 	c.press("refresh")
-	c.waitFor("Snapshot saved · depth 5")
+	c.waitFor("No baseline - scan saved - depth 5")
 	paths, err := filepath.Glob(filepath.Join(data, "snapshots", "*.json"))
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("snapshots: %v %v", paths, err)
@@ -204,7 +205,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 		Directories map[string]struct{ Size int64 }
 	}
 	b, _ := os.ReadFile(paths[0])
-	if err = json.Unmarshal(b, &snap); err != nil {
+	if err = json.Unmarshal(savedLatest(t, b), &snap); err != nil {
 		t.Fatal(err)
 	}
 	if snap.Depth != 5 || snap.Directories["Growth"].Size != 65536 {
@@ -216,6 +217,13 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	if snap.Directories[filepath.Join("Deep", "one", "two", "three", "four")].Size != 32768 {
 		t.Fatal("deep file was not aggregated")
 	}
+	assertCLIError(t, data, "NO_BASELINE", root)
+	c.press("set-baseline")
+	c.waitFor("Baseline set")
+	initial := readCLIReport(t, data, root)
+	if len(initial.Changes) != 0 {
+		t.Fatal("new baseline has a diff")
+	}
 	put(t, root, "Growth/a.bin", 131072)
 	put(t, root, "Shrink/b.bin", 65536)
 	if err = os.Remove(filepath.Join(root, "Removed", "c.bin")); err != nil {
@@ -225,8 +233,29 @@ func TestDesktopScanAndDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	put(t, root, "Added/new.bin", 32768)
-	c.press("refresh-plus")
+	c.press("refresh")
 	c.waitFor("Compared with")
+	report := readCLIReport(t, data, root)
+	if len(report.Changes) != 5 {
+		t.Fatalf("unchanged directories leaked into diff: %+v", report)
+	}
+	if report.BaselineAt != initial.BaselineAt {
+		t.Fatal("refresh moved the baseline")
+	}
+	assertChange(t, report, filepath.Join(root, "Growth"), "modified", 65536, 131072)
+	assertChange(t, report, filepath.Join(root, "Shrink"), "modified", 262144, 65536)
+	assertChange(t, report, filepath.Join(root, "Removed"), "removed", 98304, 0)
+	assertChange(t, report, filepath.Join(root, "Added"), "added", 0, 32768)
+	beforeRead, _ := os.ReadFile(paths[0])
+	put(t, root, "unscanned.tmp", 4096)
+	unchanged := readCLIReport(t, data, root)
+	afterRead, _ := os.ReadFile(paths[0])
+	if !reflect.DeepEqual(report, unchanged) || string(beforeRead) != string(afterRead) {
+		t.Fatal("CLI scanned or changed saved state")
+	}
+	if err := os.Remove(filepath.Join(root, "unscanned.tmp")); err != nil {
+		t.Fatal(err)
+	}
 	nodes := c.waitFor("Removed  (removed)")
 	for _, n := range nodes {
 		if n.Role == "treeItem" && (strings.Contains(n.Label, "%") || n.Bounds.Height > 24) {
@@ -266,9 +295,6 @@ func TestDesktopScanAndDiff(t *testing.T) {
 		}
 	}
 	c.waitFor("a.bin")
-	c.press("largest-files")
-	c.waitFor("100 largest files")
-	c.press("all-files")
 	for _, n := range c.nodes() {
 		if n.Key == "treemap" {
 			c.call("input", map[string]any{"events": []any{map[string]any{"type": "click", "x": n.Bounds.X + 40, "y": n.Bounds.Y + 12, "clicks": 2}}})
@@ -276,7 +302,6 @@ func TestDesktopScanAndDiff(t *testing.T) {
 		}
 	}
 	c.call("idle", map[string]any{"timeout": 3000})
-	c.press("map-root")
 	for _, n := range c.nodes() {
 		if n.Key == "treemap" {
 			for _, step := range []struct {
@@ -310,9 +335,30 @@ func TestDesktopScanAndDiff(t *testing.T) {
 		}
 	}
 	c.press("refresh")
-	c.waitFor("Snapshot saved · depth 2")
+	c.waitFor("Compared with")
+	c.waitFor("depth 2")
+	repeated := readCLIReport(t, data, root)
+	if repeated.BaselineAt != initial.BaselineAt {
+		t.Fatal("repeated refresh moved baseline")
+	}
+	assertChange(t, repeated, filepath.Join(root, "Growth"), "modified", 65536, 131072)
+	for _, change := range repeated.Changes {
+		if strings.Contains(change.Path, filepath.Join("Deep", "one", "two")) {
+			t.Fatal("diff exceeds common snapshot depth")
+		}
+	}
+	c.press("set-baseline")
+	c.waitFor("Baseline set")
+	if len(readCLIReport(t, data, root).Changes) != 0 {
+		t.Fatal("reset did not clear diff")
+	}
+	for _, node := range c.nodes() {
+		if strings.Contains(node.Label, "(removed)") {
+			t.Fatal("reset retained a removed directory")
+		}
+	}
 	b, _ = os.ReadFile(paths[0])
-	json.Unmarshal(b, &snap)
+	json.Unmarshal(savedLatest(t, b), &snap)
 	if snap.Depth != 2 {
 		t.Fatal("depth edit was not saved")
 	}
@@ -330,13 +376,16 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	c.value("path", filepath.Join(base, "missing"))
 	c.press("refresh")
 	c.waitFor("cannot find")
+	if len(readCLIReport(t, data, root).Changes) != 0 {
+		t.Fatal("failed scan changed saved comparison")
+	}
 	put(t, root, "Growth/a.bin", 196608)
 	_ = process.Process.Kill()
 	_ = process.Wait()
 	c.conn.Close()
 	c, _ = launch(t, exe, data, filepath.Join(base, "restart.sock"))
 	c.value("path", root)
-	c.press("refresh-plus")
+	c.press("refresh")
 	c.waitFor("Compared with")
 	nodes = c.waitFor("+64.00 KiB")
 	found := false
@@ -348,5 +397,5 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	if !found {
 		t.Fatal("snapshot depth lost after restart")
 	}
-	t.Log("Native Windows scan, allocation totals, deep aggregation, added/deleted/grown/shrunk folders, tree expansion, largest files, treemap navigation, depth edit, missing path, restart persistence, and rendering passed")
+	t.Log("Native Windows scan, allocation totals, deep aggregation, added/deleted/grown/shrunk folders, tree expansion, treemap navigation, depth edit, missing path, restart persistence, and rendering passed")
 }
