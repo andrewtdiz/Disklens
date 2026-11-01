@@ -126,6 +126,7 @@ func (a *app) pollDeleteConfirmation(c *ui.Context) {
 			return
 		}
 		a.busy, a.deleting = true, true
+		a.memory.observe(a.scan != nil, true)
 		a.scanStarted = time.Now()
 		a.scanProgress = ScanProgress{Phase: "Preparing deletion", Path: request.path}
 		a.deleteResults = make(chan deletionResult, 1)

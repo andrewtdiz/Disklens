@@ -2,4 +2,9 @@
 
 package main
 
-func trimWorkingSet() {}
+type idleMemory struct{}
+
+func (*idleMemory) observe(bool, bool) {}
+func (*idleMemory) requestTrim()       {}
+func (*idleMemory) start() func()      { return func() {} }
+func trimWorkingSet()                  {}

@@ -1,10 +1,14 @@
 # Disklens
 
+<img src="assets/icon.png" alt="Disklens folder and magnifying glass icon" width="96" height="96">
+
+App icon assets: [Windows ICO](assets/icon.ico) · [PNG](assets/icon.png) · [editable SVG](assets/icon.svg). These files are tracked in the repository for reuse in other builds. Windows resource builds use the ICO; MyGo macOS packaging uses the PNG.
+
 A native MyGo disk usage explorer for Windows and macOS. The upper pane is a compact, virtualized directory tree with folder icons and colored proportion bars; the lower pane is a label-free, size-proportional treemap. File extensions share vivid colors, with WinDirStat-style cushion shading to reveal nested groups. Both panes share a selection. The divider is resizable.
 
 ## Use
 
-On Windows, run `Disklens-0.1.5-Setup.exe` to install for your account, add Start menu shortcuts for the app and CLI terminal, and register an uninstaller in Windows Settings. The desktop shortcut is optional. Installation and removal preserve saved scans and baselines. The installed CLI is under `%LOCALAPPDATA%\Programs\Disklens\cli`; the installer adds it to your user PATH, so `disklens diff` works in new terminals. Uninstall removes that PATH entry.
+On Windows, run `Disklens-0.1.6-Setup.exe` to install for your account, add Start menu shortcuts for the app and CLI terminal, and register an uninstaller in Windows Settings. The desktop shortcut is optional. Installation and removal preserve saved scans and baselines. The installed CLI is under `%LOCALAPPDATA%\Programs\Disklens\cli`; the installer adds it to your user PATH, so `disklens diff` works in new terminals. Uninstall removes that PATH entry.
 
 Build from source using the instructions below, then open `build/windows-amd64/Disklens.exe` on Windows or `build/darwin-universal/Disklens.app` on macOS. Generated binaries are not included in the repository.
 

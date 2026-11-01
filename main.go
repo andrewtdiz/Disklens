@@ -30,6 +30,7 @@ type scanResult struct {
 }
 
 type app struct {
+	memory                  idleMemory
 	confirmDeletion         func(mygo.MessageOptions) (mygo.MessageResult, error)
 	deleteAnswers           chan deleteConfirmation
 	deleteRequest           *folderDeletion
@@ -109,6 +110,7 @@ func (a *app) start() {
 	a.settings.Depth = int(a.depth)
 	settingsErr := saveJSON(filepath.Join(dataDirectory(), "settings.json"), a.settings)
 	a.busy = true
+	a.memory.observe(a.scan != nil, true)
 	a.scanStarted = time.Now()
 	a.scanProgress = ScanProgress{Phase: "Starting scan", Path: path}
 	a.status = "Scanning…"
@@ -175,6 +177,7 @@ func (a *app) setBaseline() {
 	}
 	state := &SnapshotState{Version: 1, Latest: a.savedState.Latest, Baseline: a.savedState.Latest}
 	a.busy = true
+	a.memory.observe(a.scan != nil, true)
 	a.scanStarted = time.Now()
 	a.scanProgress = ScanProgress{Phase: "Setting baseline", Path: state.Latest.Root}
 	a.results, a.progress = make(chan scanResult, 1), make(chan ScanProgress, 1)
@@ -279,6 +282,7 @@ func theme() *ui.Theme {
 func (a *app) view(c *ui.Context) {
 	c.SetTheme(theme())
 	a.poll(c)
+	a.memory.observe(a.scan != nil, a.busy || a.deleting)
 	if c.Shortcut(ui.Cmd, ui.KeyR) {
 		a.start()
 	}
@@ -343,7 +347,7 @@ func (a *app) view(c *ui.Context) {
 				<-done
 			}
 			debug.FreeOSMemory()
-			trimWorkingSet()
+			a.memory.requestTrim()
 		}()
 	}
 }
@@ -582,6 +586,8 @@ func main() {
 		folder = os.Args[1]
 	}
 	a := newApp()
+	stopMemory := a.memory.start()
+	defer stopMemory()
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{Title: "Disklens", BackgroundColor: "#202020", Hidden: true, Width: 1280, Height: 860, MinWidth: 940, MinHeight: 580, Content: ui.View(a.view)})
 		a.win.SetOpacity(0)

@@ -160,6 +160,7 @@ func (a *app) mapView(c *ui.Context) {
 		} else {
 			r := box.Bounds()
 			if a.mapRoot != a.focus || a.mapWidth != r.W || a.mapHeight != r.H {
+				a.memory.observe(true, true)
 				if a.mapColorRoot != a.scan.Root {
 					a.mapColors = extensionColors(a.scan.Root)
 					a.mapColorRoot = a.scan.Root
@@ -167,6 +168,8 @@ func (a *app) mapView(c *ui.Context) {
 				a.tiles = layoutMap(a.focus, r.W, r.H)
 				a.mapBitmap = shadeMap(a.tiles, r.W, r.H, a.mapColors)
 				a.mapRoot, a.mapWidth, a.mapHeight = a.focus, r.W, r.H
+				a.memory.requestTrim()
+				a.memory.observe(true, a.busy || a.deleting)
 			}
 			x, y, over := box.PointerPosition()
 			a.hover = nil
