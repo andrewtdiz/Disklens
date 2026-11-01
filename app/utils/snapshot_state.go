@@ -24,14 +24,17 @@ type DirectoryChange struct {
 }
 
 type DiffSummary struct {
-	ScanInProgress      bool      `json:"scan_in_progress"`
-	Status              string    `json:"status"`
-	Root                string    `json:"root"`
-	BaselineAt          time.Time `json:"baseline_at"`
-	ScannedAt           time.Time `json:"scanned_at"`
-	Depth               int       `json:"depth"`
-	SizeBasis           string    `json:"size_basis"`
-	IncludesDescendants bool      `json:"includes_descendants"`
+	Partial                   bool      `json:"partial"`
+	BaselineUnreadableEntries int       `json:"baseline_unreadable_entries"`
+	LatestUnreadableEntries   int       `json:"latest_unreadable_entries"`
+	ScanInProgress            bool      `json:"scan_in_progress"`
+	Status                    string    `json:"status"`
+	Root                      string    `json:"root"`
+	BaselineAt                time.Time `json:"baseline_at"`
+	ScannedAt                 time.Time `json:"scanned_at"`
+	Depth                     int       `json:"depth"`
+	SizeBasis                 string    `json:"size_basis"`
+	IncludesDescendants       bool      `json:"includes_descendants"`
 }
 
 type DiffReport struct {
@@ -73,7 +76,7 @@ func LoadSnapshotState(root string) (*SnapshotState, error) {
 func SnapshotDiff(state *SnapshotState) DiffReport {
 	old, latest := state.Baseline, state.Latest
 	depth := min(old.Depth, latest.Depth)
-	report := DiffReport{DiffSummary: DiffSummary{Status: "ok", Root: latest.Root, BaselineAt: old.At.UTC(), ScannedAt: latest.At.UTC(), Depth: depth, SizeBasis: "allocated_bytes", IncludesDescendants: true}, Changes: []DirectoryChange{}}
+	report := DiffReport{DiffSummary: DiffSummary{Partial: old.UnreadableEntries > 0 || latest.UnreadableEntries > 0, BaselineUnreadableEntries: old.UnreadableEntries, LatestUnreadableEntries: latest.UnreadableEntries, Status: "ok", Root: latest.Root, BaselineAt: old.At.UTC(), ScannedAt: latest.At.UTC(), Depth: depth, SizeBasis: "allocated_bytes", IncludesDescendants: true}, Changes: []DirectoryChange{}}
 	keys := make(map[string]struct{}, len(old.Directories)+len(latest.Directories))
 	for path := range old.Directories {
 		keys[path] = struct{}{}

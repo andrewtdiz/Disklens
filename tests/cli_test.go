@@ -20,16 +20,19 @@ type cliChange struct {
 }
 
 type cliReport struct {
-	ScanInProgress      bool        `json:"scan_in_progress"`
-	Status              string      `json:"status"`
-	Code                string      `json:"code"`
-	Root                string      `json:"root"`
-	BaselineAt          string      `json:"baseline_at"`
-	ScannedAt           string      `json:"scanned_at"`
-	Depth               int         `json:"depth"`
-	SizeBasis           string      `json:"size_basis"`
-	IncludesDescendants bool        `json:"includes_descendants"`
-	Changes             []cliChange `json:"changes"`
+	Partial                   bool        `json:"partial"`
+	BaselineUnreadableEntries int         `json:"baseline_unreadable_entries"`
+	LatestUnreadableEntries   int         `json:"latest_unreadable_entries"`
+	ScanInProgress            bool        `json:"scan_in_progress"`
+	Status                    string      `json:"status"`
+	Code                      string      `json:"code"`
+	Root                      string      `json:"root"`
+	BaselineAt                string      `json:"baseline_at"`
+	ScannedAt                 string      `json:"scanned_at"`
+	Depth                     int         `json:"depth"`
+	SizeBasis                 string      `json:"size_basis"`
+	IncludesDescendants       bool        `json:"includes_descendants"`
+	Changes                   []cliChange `json:"changes"`
 }
 
 func invokeCLI(t *testing.T, data string, args ...string) (cliReport, error) {

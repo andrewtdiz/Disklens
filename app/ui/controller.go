@@ -143,7 +143,7 @@ func (a *app) start() {
 }
 
 func (a *app) setBaseline() {
-	if a.busy || a.savedState == nil || a.scan == nil || a.scan.Errors != 0 {
+	if a.busy || a.savedState == nil || a.scan == nil {
 		return
 	}
 	state := &utils.SnapshotState{Version: 1, Latest: a.savedState.Latest, Baseline: a.savedState.Latest}
@@ -223,8 +223,11 @@ func (a *app) poll(c *ui.Context) {
 				a.baseline = "Baseline set " + r.state.Baseline.At.Format("Jan 2, 15:04:05") + fmt.Sprintf(" - depth %d", r.state.Baseline.Depth)
 			}
 		}
+		if r.state != nil && r.state.Baseline != nil && r.state.Baseline.UnreadableEntries > 0 {
+			a.baseline += fmt.Sprintf(" · Partial baseline (%d unreadable entries)", r.state.Baseline.UnreadableEntries)
+		}
 		if r.scan.Errors > 0 {
-			a.baseline = "Partial scan · comparison unavailable"
+			a.baseline += fmt.Sprintf(" · Partial scan (%d unreadable entries)", r.scan.Errors)
 		}
 		a.status = fmt.Sprintf("%s on disk · %d files · %d folders · %d links / special entries skipped", utils.FormatSize(a.scan.Root.Size), a.scan.Files, a.scan.Folders, a.scan.Skipped)
 		if r.notice != "" {

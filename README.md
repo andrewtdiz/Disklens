@@ -6,7 +6,7 @@ A native disk usage explorer for Windows and macOS, built with [MyGo](https://my
 
 ## Getting started
 
-On Windows, run `Disklens-<version>-Setup.exe`. It installs the desktop app and adds the CLI to your user PATH. For macOS or source builds, see [Build](#build).
+On Windows, run the release's setup `.exe`. It installs the desktop app; add its `cli` directory to PATH to use the CLI. For macOS or source builds, see [Build](#build).
 
 **Permissions:** Windows requests administrator access for fast NTFS scanning. On macOS, enable Disklens under **System Settings → Privacy & Security → Full Disk Access**, then reopen it to scan protected folders without repeated prompts.
 
@@ -27,7 +27,7 @@ On Windows, run `Disklens-<version>-Setup.exe`. It installs the desktop app and 
 ## Scans and saved data
 
 - Sizes represent allocated file bytes, not volume free space. Hard links count once; symlinks, Windows reparse points, and special entries are skipped. Shared APFS clone extents are not separately accounted for.
-- Unreadable entries produce a partial scan, which does not replace the saved scan or baseline. Files can change during a scan.
+- Unreadable entries produce a saved partial scan that can be set as a baseline. Partial scans and baselines are labeled; unreadable data is excluded, so access changes may appear as size changes. Files can change during a scan.
 - Each root retains one latest successful scan and one baseline. Nothing is uploaded; there is no automatic rescanning. Large scans retain a full tree in memory.
 
 | Platform | Settings and snapshots |
@@ -81,6 +81,12 @@ Use `darwin/universal` for Apple Silicon and Intel. Local builds are ad-hoc sign
 ```
 
 `run.ps1` builds and opens the app. Windows icon compilation requires MinGW `windres`; installer packaging also requires NSIS `makensis` on PATH. Fast NTFS scanning falls back to directory enumeration when unavailable.
+
+## Updates
+
+Packaged apps check for updates automatically. Use **Help → Check for Updates…**
+for a manual check. See [release instructions](docs/releases.md) for publishing
+signed updates and configuring macOS certificate signing.
 
 ## Repository
 

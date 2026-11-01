@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Validate version and update key
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          test "$GITHUB_REF_NAME" = "v$(node -p 'require("./mygo.json").version')"
+          test -n "$MYGO_UPDATER_PRIVATE_KEY"
+      - name: Prepare draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft > "$RUNNER_TEMP/release.json"; then
+            jq -e '.isDraft == true' "$RUNNER_TEMP/release.json"
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --draft --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+
+  build:
+    needs: draft
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin/arm64,darwin/amd64,darwin/universal
+          - os: ubuntu-latest
+            platform: windows/amd64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+      - name: Prepare Windows installer and bundled CLI
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nsis
+          mkdir -p resources/windows-amd64/cli
+          GOOS=windows GOARCH=amd64 go build -tags cli -o resources/windows-amd64/cli/disklens.exe ./app
+      - name: Configure macOS signing and notarization
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          if [ -z "$MACOS_CERTIFICATE" ]; then
+            echo "::warning::No Developer ID certificate configured; macOS builds will be ad-hoc signed."
+            exit 0
+          fi
+          : "${MACOS_CERTIFICATE_PASSWORD:?}" "${MACOS_SIGNING_IDENTITY:?}" "${APPLE_ID:?}" "${APPLE_TEAM_ID:?}" "${APPLE_APP_PASSWORD:?}"
+          signing_keychain="$RUNNER_TEMP/disklens-signing.keychain-db"
+          signing_password="$(openssl rand -base64 24)"
+          echo "::add-mask::$signing_password"
+          security create-keychain -p "$signing_password" "$signing_keychain"
+          security set-keychain-settings -lut 21600 "$signing_keychain"
+          security unlock-keychain -p "$signing_password" "$signing_keychain"
+          printf '%s' "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$signing_keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$signing_password" "$signing_keychain" > /dev/null
+          security list-keychains -d user -s "$signing_keychain" login.keychain
+          xcrun notarytool store-credentials disklens --keychain "$signing_keychain" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          export DISKLENS_SIGNING_KEYCHAIN="$signing_keychain"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          p = Path('mygo.json')
+          config = json.loads(p.read_text())
+          config['macos'] = {
+              'signingIdentity': os.environ['MACOS_SIGNING_IDENTITY'],
+              'notarize': {'keychainProfile': 'disklens', 'keychain': os.environ['DISKLENS_SIGNING_KEYCHAIN']},
+          }
+          p.write_text(json.dumps(config, indent=2) + '\n')
+          PY
+      - name: Build signed updates and upload to draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+          DISKLENS_PLATFORMS: ${{ matrix.platform }}
+        run: go run github.com/egoist/mygo/cmd/mygo@v0.7.3 build -platform "$DISKLENS_PLATFORMS" -upload

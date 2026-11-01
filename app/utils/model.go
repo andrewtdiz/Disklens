@@ -115,10 +115,11 @@ type Entry struct {
 }
 
 type Snapshot struct {
-	Root        string           `json:"root"`
-	Depth       int              `json:"depth"`
-	At          time.Time        `json:"at"`
-	Directories map[string]Entry `json:"directories"`
+	UnreadableEntries int              `json:"unreadable_entries,omitempty"`
+	Root              string           `json:"root"`
+	Depth             int              `json:"depth"`
+	At                time.Time        `json:"at"`
+	Directories       map[string]Entry `json:"directories"`
 }
 
 type Settings struct {

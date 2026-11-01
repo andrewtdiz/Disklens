@@ -27,3 +27,6 @@ Desktop.ini
 /.vscode/
 *.swp
 *.swo
+
+mygo-update.key
+/resources/windows-*/

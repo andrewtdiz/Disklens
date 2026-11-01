@@ -141,6 +141,9 @@ func writeTextDiff(out io.Writer, report utils.DiffReport) error {
 	fmt.Fprintf(&buffer, "%s - saved comparison\n", report.Root)
 	fmt.Fprintf(&buffer, "Baseline:    %s\nLatest scan: %s\n", report.BaselineAt.Local().Format("2006-01-02 15:04:05 -07:00"), report.ScannedAt.Local().Format("2006-01-02 15:04:05 -07:00"))
 	fmt.Fprintf(&buffer, "Depth: %d | Allocated disk space\n\n", report.Depth)
+	if report.Partial {
+		fmt.Fprintf(&buffer, "Partial comparison: baseline has %d unreadable entries; latest scan has %d. Unreadable data is excluded; access changes may appear as size changes.\n\n", report.BaselineUnreadableEntries, report.LatestUnreadableEntries)
+	}
 	if len(report.Changes) == 0 {
 		buffer.WriteString("No size changes.\n")
 	} else {

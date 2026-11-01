@@ -24,9 +24,7 @@ func ScanAndSave(ctx context.Context, path string, depth int, publish func(ScanP
 	}
 	r := ScanOutcome{Scan: s, Err: err}
 	if err == nil {
-		if s.Errors > 0 {
-			r.Notice = fmt.Sprintf("Partial scan · %d unreadable entries · snapshot unchanged", s.Errors)
-		} else if loadErr != nil {
+		if loadErr != nil {
 			r.Notice = "Cannot read saved snapshot: " + loadErr.Error()
 		} else {
 			p := ScanProgress{Phase: "Preparing snapshot", Path: path, Files: s.Files, Folders: s.Folders, Bytes: s.Bytes}
@@ -43,6 +41,9 @@ func ScanAndSave(ctx context.Context, path string, depth int, publish func(ScanP
 					r.Notice = "Scan could not be saved: " + err.Error()
 				} else {
 					r.Saved, r.State = true, state
+					if s.Errors > 0 {
+						r.Notice = fmt.Sprintf("Partial scan saved · %d unreadable entries", s.Errors)
+					}
 					CompareSaved(s.Root, state)
 				}
 			}

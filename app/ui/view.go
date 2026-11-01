@@ -164,12 +164,17 @@ func (a *app) toolbar(c *ui.Context) {
 				if toolbarButton(c.Key("refresh"), "Refresh", "Refresh", refreshIcon, 84).Tooltip("Scan and compare with the fixed baseline - Ctrl/Cmd+R").Clicked() {
 					a.start()
 				}
-				canSet := a.savedState != nil && a.scan != nil && a.scan.Errors == 0
+				canSet := a.savedState != nil && a.scan != nil
 				path, err := filepath.Abs(filepath.Clean(a.settings.Path))
 				canSet = canSet && err == nil && utils.SnapshotPath(path) == utils.SnapshotPath(a.scan.Root.FullPath())
 				hint := "Complete a scan before setting its baseline"
 				if canSet {
 					hint = "Use the saved scan from " + a.savedState.Latest.At.Format("Jan 2, 15:04:05") + " as the baseline for " + a.scan.Root.FullPath()
+					if a.savedState.Latest.UnreadableEntries > 0 {
+						hint += fmt.Sprintf(". Partial scan: %d unreadable entries. You can set this baseline; unreadable data is excluded and access changes may appear as size changes.", a.savedState.Latest.UnreadableEntries)
+					}
+				} else if a.scan != nil {
+					hint = "Refresh this folder and save its scan before setting a baseline. Unreadable entries are allowed."
 				}
 				if ui.Button(c.Key("set-baseline"), "Set baseline").Height(26).Width(100).Padding(0, 6).Disabled(!canSet).Tooltip(hint).Clicked() {
 					a.setBaseline()

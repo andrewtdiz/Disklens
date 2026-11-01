@@ -6,7 +6,7 @@ import (
 )
 
 func TakeSnapshot(s *Scan, depth int) *Snapshot {
-	out := &Snapshot{Root: s.Root.FullPath(), Depth: depth, At: s.At, Directories: map[string]Entry{}}
+	out := &Snapshot{UnreadableEntries: s.Errors, Root: s.Root.FullPath(), Depth: depth, At: s.At, Directories: map[string]Entry{}}
 	var visit func(*Node, int)
 	visit = func(n *Node, level int) {
 		if !n.Dir || n.Removed || level > depth {

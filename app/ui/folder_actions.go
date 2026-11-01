@@ -148,7 +148,7 @@ func (a *app) pollDeletion(c *ui.Context) {
 			defer r.Lock.Close()
 			result := scanResult{scan: scan, reconcile: true, notice: notice}
 			state, err := utils.LoadSnapshotState(scan.Root.FullPath())
-			if err == nil && scan.Errors == 0 {
+			if err == nil && r.ReconcileErr == nil {
 				state.Latest = utils.TakeSnapshot(scan, depth)
 				state.Latest.At = time.Now()
 				err = utils.SaveJSON(utils.SnapshotPath(scan.Root.FullPath()), state)
@@ -159,7 +159,7 @@ func (a *app) pollDeletion(c *ui.Context) {
 			if err != nil {
 				result.notice += fmt.Sprintf(" · Snapshot unchanged: %v", err)
 			}
-			if scan.Errors != 0 {
+			if r.ReconcileErr != nil {
 				result.notice += " · Snapshot unchanged"
 			}
 			results <- result
