@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strconv"
 	"time"
@@ -70,8 +71,11 @@ type app struct {
 }
 
 func newApp() *app {
-	home, _ := os.UserHomeDir()
-	a := &app{confirmDeletion: mygo.Dialog.Message, settings: utils.Settings{Path: home, Depth: 5}, split: 50, row: 0, status: "Choose a folder, then Refresh to scan."}
+	root := "/"
+	if runtime.GOOS == "windows" {
+		root = `C:\`
+	}
+	a := &app{confirmDeletion: mygo.Dialog.Message, settings: utils.Settings{Path: root, Depth: 5}, split: 50, row: 0, status: "Choose a folder, then Refresh to scan."}
 	if err := utils.MigrateState(); err != nil {
 		a.stateMigrationErr = err
 		a.status = "Could not migrate saved scans: " + err.Error()

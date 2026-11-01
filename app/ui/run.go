@@ -29,6 +29,7 @@ func Run() {
 	stopMemory := a.memory.start()
 	defer stopMemory()
 	mygo.App.WhenReady(func() {
+		configureDockIcon()
 		menu := mygo.App.Menu()
 		if menu == nil {
 			menu = mygo.NewMenu([]*mygo.MenuItem{{Role: mygo.RoleFileMenu}, {Role: mygo.RoleEditMenu}})
