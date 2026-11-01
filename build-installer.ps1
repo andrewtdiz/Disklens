@@ -9,9 +9,9 @@ $null = New-Item -ItemType Directory -Force -Path (Join-Path $payload 'cli')
 Push-Location $PSScriptRoot
 try {
     & (Join-Path $PSScriptRoot 'build-resources.ps1')
-    & $goBinary build -trimpath -tags mygo_noinspector -ldflags '-H=windowsgui' -o (Join-Path $payload 'Disklens.exe') .
+    & $goBinary build -trimpath -tags mygo_noinspector -ldflags '-H=windowsgui' -o (Join-Path $payload 'Disklens.exe') ./app
     if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed.' }
-    & $goBinary build -trimpath -tags cli -o (Join-Path $payload 'cli/disklens.exe') .
+    & $goBinary build -trimpath -tags cli -o (Join-Path $payload 'cli/disklens.exe') ./app
     if ($LASTEXITCODE -ne 0) { throw 'CLI build failed.' }
     & $nsis /V2 "/DVERSION=$version" "/DPAYLOAD=$payload" "/DOUTPUT=$output" (Join-Path $PSScriptRoot 'installer/windows.nsi')
     if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }

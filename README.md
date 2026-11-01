@@ -1,8 +1,8 @@
 # Disklens
 
-<img src="assets/icon.png" alt="Disklens folder and magnifying glass icon" width="96" height="96">
+<img src="app/assets/icon.png" alt="Disklens folder and magnifying glass icon" width="96" height="96">
 
-App icon assets: [Windows ICO](assets/icon.ico) � [PNG](assets/icon.png) � [editable SVG](assets/icon.svg). These files are tracked in the repository for reuse in other builds. Windows resource builds use the ICO; MyGo macOS packaging uses the PNG.
+App icon assets: [Windows ICO](app/assets/icon.ico) � [PNG](app/assets/icon.png) � [editable SVG](app/assets/icon.svg). These files are tracked in the repository for reuse in other builds. Windows resource builds use the ICO; MyGo macOS packaging uses the PNG.
 
 A native MyGo disk usage explorer for Windows and macOS. The upper pane is a compact, virtualized directory tree with folder icons and colored proportion bars; the lower pane is a label-free, size-proportional treemap. File extensions share vivid colors, with WinDirStat-style cushion shading to reveal nested groups. Both panes share a selection. The divider is resizable.
 
@@ -25,21 +25,39 @@ Build from source using the instructions below, then open `build/windows-amd64/D
 
 The entire directory is scanned, regardless of snapshot depth. The interactive tree retains all scanned files and directories in RAM; snapshot depth only limits the saved directory records. Nodes store names and parent links, reconstructing full paths on demand. Modification timestamps use a compact representation, and child-list storage is allocated only for directories with children. After publishing a completed scan, the app releases unused scan memory back to the operating system. One baseline and one latest successful scan per root are retained locally across restarts, in one replaced state file. There is no accumulating history. Existing snapshots from earlier builds are treated as saved scans without a baseline; Refresh and explicitly Set baseline to begin comparisons. Nothing is uploaded. Snapshot and settings files live under `%USERPROFILE%\.disklens` on Windows and `~/Library/Application Support/Disklens` on macOS. Windows uses a shared profile directory so terminals launched by packaged applications cannot read a private AppData snapshot copy. On first launch from the Start menu, the desktop copies existing scans and settings from `%APPDATA%\Disklens`, preserving their baseline and timestamps and leaving the originals as backups. The CLI never imports an older private copy. `DISKLENS_DATA` overrides the location for testing.
 
-Sizes are allocated file bytes: Windows allocation information and macOS `stat` blocks. Hard-linked files are counted once, under the first encountered path. Symlinks, Windows reparse points (including junctions and cloud placeholders), and non-regular entries are skipped. Filesystem metadata, directory allocation, and shared APFS clone extents are not separately accounted for. Results are not a volume free-space measurement.
+Sizes are allocated file bytes: Windows allocation information and macOS bulk allocation metadata (falling back to `stat` blocks when unavailable). Hard-linked files are counted once, under the first encountered path. Symlinks, Windows reparse points (including junctions and cloud placeholders), and non-regular entries are skipped. Filesystem metadata, directory allocation, and shared APFS clone extents are not separately accounted for. Results are not a volume free-space measurement.
 
 Unreadable entries produce a partial scan with a visible error count; hover the bottom status to inspect the first error. A partial scan neither compares nor replaces the saved scan or baseline. Set baseline is disabled for partial scans. The CLI continues to report the previous successful saved comparison, with its timestamps. Files can change during a scan; the scan is not a filesystem-level point-in-time snapshot.
+
+## Repository layout
+
+```text
+app/
+  main.go        Desktop entry point
+  cli_main.go    CLI entry point (cli build tag)
+  cli.go         Terminal commands and output
+  ui/            Native windows, UI state, tree, treemap and dialogs
+  utils/         Scanning, filesystem operations, snapshots and storage
+  assets/        Original app icon and Windows resources
+tests/           Desktop and CLI integration tests
+```
+
+UI code and CLI commands share `utils`, which has no UI dependency.
+Platform-specific implementations stay beside their owning code using
+`_darwin.go` and `_windows.go` files. Run build commands from the repository root.
+`mygo.json` points to `./app`.
 
 ## Read-only CLI
 
 ```powershell
-go build -tags cli -o build/cli/disklens.exe .
+go build -tags cli -o build/cli/disklens.exe ./app
 $env:PATH = "$(Resolve-Path build/cli);$env:PATH"
 disklens diff
 disklens diff "$env:USERPROFILE"
 disklens diff --json
 ```
 
-On macOS, build with `go build -tags cli -o build/cli/disklens .` and add that directory to PATH. The CLI build does not include MyGo or open a window. `run.ps1` also builds the Windows CLI. Use the console binary in `build/cli` for terminal commands, rather than the Windows GUI executable.
+On macOS, build with `go build -tags cli -o build/cli/disklens ./app` and add that directory to PATH. The CLI build does not include MyGo or open a window. `run.ps1` also builds the Windows CLI. Use the console binary in `build/cli` for terminal commands, rather than the Windows GUI executable.
 
 `disklens diff [path] [--json]` reads the latest saved comparison for exactly that root. The default is `C:\` on Windows and `/` on macOS. It never scans, resets a baseline, creates directories, or updates files. It works while the UI is closed and even if the scanned directory is no longer accessible. Manage scanning and baseline selection in the desktop app. This is a report of the last successful scan, not the current filesystem; inspect its timestamps.
 
@@ -97,12 +115,20 @@ go run . /path/to/scan
 
 On Windows, `./run.ps1` locates the installed Go toolchain, builds the desktop app and CLI, and opens the application. A folder is optional: `./run.ps1 -Folder "$env:USERPROFILE\Downloads"`.
 
-With NSIS `makensis` and MinGW `windres` on PATH, run `./build-installer.ps1` to build the Windows desktop and CLI and package `build/Disklens-<version>-Setup.exe`. The version comes from `mygo.json`. `build-resources.ps1` embeds `assets/icon.ico` into Windows executables; `mygo.json` supplies `assets/icon.png` for macOS packaging. The editable icon source is `assets/icon.svg`.
+With NSIS `makensis` and MinGW `windres` on PATH, run `./build-installer.ps1` to build the Windows desktop and CLI and package `build/Disklens-<version>-Setup.exe`. The version comes from `mygo.json`. `build-resources.ps1` embeds `app/assets/icon.ico` into Windows executables; `mygo.json` supplies `app/assets/icon.png` for macOS packaging. The editable icon source is `app/assets/icon.svg`.
 
 Build a portable Windows app on Windows:
 
 ```powershell
-go build -ldflags '-H=windowsgui' -o build/windows-amd64/Disklens.exe .
+go build -ldflags '-H=windowsgui' -o build/windows-amd64/Disklens.exe ./app
+```
+
+Build and launch on an Apple Silicon Mac:
+
+```sh
+go run github.com/egoist/mygo/cmd/mygo@v0.7.3 build -skip-dmg -platform darwin/arm64
+ditto build/darwin-arm64/Disklens.app ~/Applications/Disklens.app
+open ~/Applications/Disklens.app
 ```
 
 Build a universal Mac app from Windows or macOS:
@@ -111,19 +137,34 @@ Build a universal Mac app from Windows or macOS:
 go run github.com/egoist/mygo/cmd/mygo@v0.7.3 build -debug -skip-dmg -platform darwin/universal
 ```
 
-The Mac build produces an unsigned bundle for Apple Silicon and Intel. Cross-compilation has been verified. It has not been run on a Mac. Distribution signing and notarization require a Mac and a signing identity. These build commands retain MyGo's development inspector.
+The Mac bundle uses the upstream Disklens icon from `app/assets/icon.png`.
+
+The native Mac build is locally ad-hoc signed. The universal build supports Apple Silicon and Intel; `-debug` retains MyGo's development inspector. Distribution signing and notarization require a signing identity.
+
+On macOS, scanning uses `getattrlistbulk` with up to eight concurrent directory readers, each reusing a 256 KiB buffer, to retrieve names, types, timestamps, file identities, and allocated bytes together. File metadata queries are only needed when a filesystem does not supply the requested bulk attributes. Directories are opened without following symlinks, and repeated directory identities are skipped so APFS firmlink aliases do not scan the same tree twice. Hard links are assigned deterministically to the first path in name-sorted traversal, independent of worker completion order. Only directory metadata reads run concurrently; one coordinator owns the tree and counters, and directory totals are accumulated after all reads finish. The scanner never reads file contents. macOS privacy restrictions can produce partial scans; grant Disklens Full Disk Access in System Settings > Privacy & Security if you want it to scan protected folders.
+
+## macOS verification
+
+```sh
+go test -tags e2e -run TestMacScanner -v ./app/utils
+go build -tags e2e -o build/Disklens-e2e ./app
+go build -tags cli -o build/cli/disklens ./app
+DISKLENS_EXE="$PWD/build/Disklens-e2e" DISKLENS_CLI_EXE="$PWD/build/cli/disklens" go test ./tests -v
+```
+
+The filesystem check compares the bulk scanner against `stat` on real files, including multiple batches, Unicode names, hard links, sparse and compressed files, skipped symlinks, permission errors, and cancellation. Set `DISKLENS_SCAN_ROOT` to compare both backends on an existing stable directory. The desktop check exercises scans, baseline comparisons, tree and treemap interactions, rendering, and persistence across restarts.
 
 ## Windows end-to-end verification
 
 The maintained test launches the actual native app, drives its UI through MyGo's test-only automation socket, and verifies real filesystem scans and persisted snapshots. Automation is excluded from ordinary builds.
 
 ```powershell
-go build -tags e2e -o build/Disklens-e2e.exe .
-go build -tags cli -o build/cli/disklens.exe .
+go build -tags e2e -o build/Disklens-e2e.exe ./app
+go build -tags cli -o build/cli/disklens.exe ./app
 $env:DISKLENS_CLI_EXE = (Resolve-Path build/cli/disklens.exe).Path
 $env:DISKLENS_EXE = (Resolve-Path build/Disklens-e2e.exe).Path
 go test ./tests -v -count=1
-go test -tags e2e . -run TestScanStatusCLIIntegration -v -count=1
+go test -tags e2e ./app/... -run TestScanStatusCLIIntegration -v -count=1
 go vet ./...
 ```
 
@@ -149,11 +190,11 @@ These tests run the scanner without creating the desktop or writing snapshots:
 
 ```powershell
 $env:DISKLENS_SCAN_ROOT = "$env:USERPROFILE"
-go test -tags e2e . -run '^TestScannerFilesystem$' -v -count=1
+go test -tags e2e ./app/... -run '^TestScannerFilesystem$' -v -count=1
 ```
 
 Set `DISKLENS_SCAN_BACKEND=mft` in an elevated shell to measure the NTFS backend. `DISKLENS_SCAN_RESULT` optionally writes a small JSON result with elapsed time, counts, allocated bytes and a tree checksum. Tests have a three-minute scan deadline. `DISKLENS_PARITY_ROOT` enables `TestScannerBackendParity`, comparing both scanners and checking allocation differences against Windows APIs; use a quiet fixture directory for strict equality and set `DISKLENS_REQUIRE_PARITY=1` to enforce it.
 
 `TestScannerAllocationAndCancellation` verifies real ordinary, compressed, sparse and hard-linked files. Set `DISKLENS_NTFS_IMAGE` to the pinned go-ntfs module's `parser/test_data/test.ntfs.dd` fixture to run `TestNTFSImageFilesystem` and `TestNTFSUnbufferedImage`, which check reconstruction, allocation, subtree selection, cancellation, and aligned Windows disk reads.
 
-`go test -tags e2e . -run '^Test(Deletion|Folder)' -v` checks deletion against disposable filesystem fixtures: native confirmation, cancellation, junction isolation, read-only and locked files, late-created entries, hard-link accounting, and targeted snapshot updates. Set `DISKLENS_DELETE_BENCH=1` to include a comparison of serial recursive removal and retained-tree parallel deletion on two generated 8,192-file fixtures; it never accepts a user directory as a deletion benchmark target.
+`go test -tags e2e ./app/... -run '^Test(Deletion|Folder)' -v` checks deletion against disposable filesystem fixtures: native confirmation, cancellation, junction isolation, read-only and locked files, late-created entries, hard-link accounting, and targeted snapshot updates. Set `DISKLENS_DELETE_BENCH=1` to include a comparison of serial recursive removal and retained-tree parallel deletion on two generated 8,192-file fixtures; it never accepts a user directory as a deletion benchmark target.

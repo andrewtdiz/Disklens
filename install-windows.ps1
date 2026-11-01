@@ -9,9 +9,9 @@ $null = New-Item -ItemType Directory -Force -Path $packageCLI
 Push-Location $PSScriptRoot
 try {
     & (Join-Path $PSScriptRoot 'build-resources.ps1')
-    & $goBinary build -trimpath -tags mygo_noinspector -ldflags '-H=windowsgui' -o (Join-Path $packageDirectory 'Disklens.exe') .
+    & $goBinary build -trimpath -tags mygo_noinspector -ldflags '-H=windowsgui' -o (Join-Path $packageDirectory 'Disklens.exe') ./app
     if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed.' }
-    & $goBinary build -trimpath -tags cli -o (Join-Path $packageCLI 'disklens.exe') .
+    & $goBinary build -trimpath -tags cli -o (Join-Path $packageCLI 'disklens.exe') ./app
     if ($LASTEXITCODE -ne 0) { throw 'CLI build failed.' }
 } finally { Pop-Location }
 $installRoot = [IO.Path]::GetFullPath($InstallDirectory)

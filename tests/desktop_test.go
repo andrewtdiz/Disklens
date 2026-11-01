@@ -375,7 +375,11 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	}
 	c.value("path", filepath.Join(base, "missing"))
 	c.press("refresh")
-	c.waitFor("cannot find")
+	if runtime.GOOS == "windows" {
+		c.waitFor("cannot find")
+	} else {
+		c.waitFor("no such file or directory")
+	}
 	if len(readCLIReport(t, data, root).Changes) != 0 {
 		t.Fatal("failed scan changed saved comparison")
 	}
@@ -397,5 +401,5 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	if !found {
 		t.Fatal("snapshot depth lost after restart")
 	}
-	t.Log("Native Windows scan, allocation totals, deep aggregation, added/deleted/grown/shrunk folders, tree expansion, treemap navigation, depth edit, missing path, restart persistence, and rendering passed")
+	t.Log("Native desktop scan, allocation totals, deep aggregation, added/deleted/grown/shrunk folders, tree expansion, treemap navigation, depth edit, missing path, restart persistence, and rendering passed")
 }
