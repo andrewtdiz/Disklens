@@ -2,6 +2,7 @@
   "name": "Disklens",
   "slug": "disklens",
   "identifier": "dev.disklens.desktop",
-  "version": "0.1.0",
+  "version": "0.1.5",
+  "icon": "assets/icon.png",
   "out": "build"
 }

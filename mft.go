@@ -19,11 +19,12 @@ import (
 const mftReferenceMask = uint64(1<<48) - 1
 
 type mftRecord struct {
-	size       int64
-	modified   uint64
-	attributes uint32
-	sequence   uint16
-	present    bool
+	size          int64
+	modified      uint64
+	attributes    uint32
+	sequence      uint16
+	present       bool
+	multipleLinks bool
 }
 
 type mftLink struct {
@@ -141,6 +142,7 @@ func (index *mftIndex) addRecord(b []byte, id uint64) error {
 	}
 	if base == 0 {
 		r.present = true
+		r.multipleLinks = binary.LittleEndian.Uint16(b[18:20]) > 1
 		if binary.LittleEndian.Uint16(b[22:24])&2 != 0 {
 			r.attributes |= 0x10
 		}
@@ -229,8 +231,9 @@ func (index *mftIndex) tree(ctx context.Context, path string, rootReference uint
 	if !root.present || root.sequence != uint16(rootReference>>48) || root.attributes&0x10 == 0 {
 		return nil, errors.New("Selected directory changed during the MFT scan")
 	}
-	s := &Scan{At: time.Now(), Root: &Node{Name: filepath.Base(path), Path: path, Dir: true}}
+	s := &Scan{At: time.Now(), Root: &Node{Name: path, Dir: true}}
 	seen := make([]bool, len(index.records))
+	linkOwners := make(map[uint64]*Node)
 	var visit func(*Node, uint64) error
 	visit = func(parent *Node, reference uint64) error {
 		if err := ctx.Err(); err != nil {
@@ -243,7 +246,7 @@ func (index *mftIndex) tree(ctx context.Context, path string, rootReference uint
 		seen[id] = true
 		s.Folders++
 		record := index.records[id]
-		parent.Modified = ntfsTime(record.modified)
+		parent.Modified = timestampFromNTFS(record.modified)
 		links := index.children[reference]
 		sort.Slice(links, func(i, j int) bool { return links[i].name < links[j].name })
 		for _, link := range links {
@@ -256,21 +259,28 @@ func (index *mftIndex) tree(ctx context.Context, path string, rootReference uint
 			}
 			child := index.records[childID]
 			if !child.present || child.sequence != uint16(link.reference>>48) {
-				s.recordError(filepath.Join(parent.Path, link.name), errors.New("File changed during MFT scan"))
+				s.recordError(filepath.Join(parent.FullPath(), link.name), errors.New("File changed during MFT scan"))
 				continue
 			}
 			if child.attributes&0x400 != 0 {
 				s.Skipped++
 				continue
 			}
-			n := &Node{Name: link.name, Path: filepath.Join(parent.Path, link.name), Parent: parent, Dir: child.attributes&0x10 != 0, Modified: ntfsTime(child.modified)}
-			parent.Children = append(parent.Children, n)
+			n := &Node{Name: link.name, Parent: parent, Dir: child.attributes&0x10 != 0, Modified: timestampFromNTFS(child.modified)}
+			parent.addChild(n)
 			if n.Dir {
 				if err := visit(n, link.reference); err != nil {
 					return err
 				}
 			} else {
 				s.Files++
+				if child.multipleLinks {
+					if previous := linkOwners[childID]; previous != nil {
+						retainLinks(previous, n)
+					} else {
+						linkOwners[childID] = n
+					}
+				}
 				if !seen[childID] {
 					n.Size = child.size
 					seen[childID] = true
@@ -279,7 +289,7 @@ func (index *mftIndex) tree(ctx context.Context, path string, rootReference uint
 			}
 			parent.Size += n.Size
 		}
-		sortNodes(parent.Children)
+		sortNodes(parent.Children())
 		return nil
 	}
 	if err := visit(s.Root, rootReference); err != nil {
@@ -287,8 +297,4 @@ func (index *mftIndex) tree(ctx context.Context, path string, rootReference uint
 	}
 	s.Fraction = 1
 	return s, nil
-}
-
-func ntfsTime(ticks uint64) time.Time {
-	return time.Unix(int64(ticks/10000000)-11644473600, int64(ticks%10000000)*100).Local()
 }

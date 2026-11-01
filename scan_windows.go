@@ -74,7 +74,7 @@ func walkWindowsDirectory(ctx context.Context, path string, progress func(ScanPr
 	if !info.IsDir() || skipEntry(info) {
 		return nil, errors.New("Choose a real directory, not a symbolic link or reparse point")
 	}
-	s := &Scan{Backend: "Directory", At: time.Now(), Root: &Node{Name: info.Name(), Path: path, Dir: true, Modified: info.ModTime()}}
+	s := &Scan{Backend: "Directory", At: time.Now(), Root: &Node{Name: path, Dir: true, Modified: timestampFromTime(info.ModTime())}}
 	report := scanReporter(s, progress)
 	volume, _ := windows.UTF16PtrFromString(filepath.VolumeName(path) + `\`)
 	remote := strings.HasPrefix(path, `\\`) || windows.GetDriveType(volume) == windows.DRIVE_REMOTE
@@ -147,7 +147,7 @@ func walkWindowsDirectory(ctx context.Context, path string, progress func(ScanPr
 						group.Wait()
 						return walkDirectoryPortable(ctx, path, progress)
 					}
-					s.recordError(result.job.node.Path, result.err)
+					s.recordError(result.job.node.FullPath(), result.err)
 				}
 				s.Folders++
 				s.DirectoryBatches += result.queries
@@ -167,9 +167,9 @@ func walkWindowsDirectory(ctx context.Context, path string, progress func(ScanPr
 						s.Skipped++
 						continue
 					}
-					parent.Children = append(parent.Children, n)
+					parent.addChild(n)
 					if entry.err != nil {
-						s.recordError(n.Path, entry.err)
+						s.recordError(n.FullPath(), entry.err)
 					}
 					if n.Dir {
 						pending = append(pending, directoryJob{n, weight})
@@ -178,7 +178,8 @@ func walkWindowsDirectory(ctx context.Context, path string, progress func(ScanPr
 					s.Files++
 					if entry.id != 0 {
 						if previous := seen[entry.id]; previous != nil {
-							if pathBefore(n.Path, previous.Path) {
+							retainLinks(previous, n)
+							if pathBefore(n.FullPath(), previous.FullPath()) {
 								s.Bytes -= previous.Size
 								previous.Size = 0
 								seen[entry.id] = n
@@ -191,7 +192,7 @@ func walkWindowsDirectory(ctx context.Context, path string, progress func(ScanPr
 					}
 					s.Bytes += n.Size
 				}
-				report(parent.Path, false)
+				report(parent.FullPath(), false)
 			}
 		}
 	}
@@ -202,7 +203,7 @@ func walkWindowsDirectory(ctx context.Context, path string, progress func(ScanPr
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		for _, child := range n.Children {
+		for _, child := range n.Children() {
 			if child.Dir {
 				if err := finalize(child); err != nil {
 					return err
@@ -210,7 +211,7 @@ func walkWindowsDirectory(ctx context.Context, path string, progress func(ScanPr
 			}
 			n.Size += child.Size
 		}
-		sortNodes(n.Children)
+		sortNodes(n.Children())
 		return nil
 	}
 	if err := finalize(s.Root); err != nil {
@@ -232,7 +233,7 @@ func pathBefore(a, b string) bool {
 }
 
 func readDirectoryRecords(ctx context.Context, parent *Node, buffer *directoryBuffer) ([]directoryRecord, error) {
-	path, err := windows.UTF16PtrFromString(longWindowsPath(parent.Path))
+	path, err := windows.UTF16PtrFromString(longWindowsPath(parent.FullPath()))
 	if err != nil {
 		return nil, err
 	}
@@ -272,14 +273,14 @@ func readDirectoryRecords(ctx context.Context, parent *Node, buffer *directoryBu
 			if filename != "." && filename != ".." {
 				attributes := binary.LittleEndian.Uint32(b[56:60])
 				ticks := binary.LittleEndian.Uint64(b[24:32])
-				n := &Node{Name: filename, Path: filepath.Join(parent.Path, filename), Parent: parent, Dir: attributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0, Modified: time.Unix(int64(ticks/10000000)-11644473600, int64(ticks%10000000)*100).Local()}
+				n := &Node{Name: filename, Parent: parent, Dir: attributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0, Modified: timestampFromNTFS(ticks)}
 				entry := directoryRecord{node: n, id: binary.LittleEndian.Uint64(b[72:80]), attributes: attributes}
 				if !n.Dir && attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
 					n.Size = int64(binary.LittleEndian.Uint64(b[48:56]))
 					logicalSize := int64(binary.LittleEndian.Uint64(b[40:48]))
 					if n.Size == 0 && !buffer.remote && (attributes&(windows.FILE_ATTRIBUTE_COMPRESSED|windows.FILE_ATTRIBUTE_SPARSE_FILE) != 0 || (buffer.clusterSize > 0 && logicalSize > buffer.clusterSize)) {
 						buffer.fileQueries++
-						n.Size, entry.err = compressedAllocation(n.Path)
+						n.Size, entry.err = compressedAllocation(n.FullPath())
 					}
 				}
 				entries = append(entries, entry)
@@ -304,4 +305,8 @@ func compressedAllocation(path string) (int64, error) {
 		return 0, err
 	}
 	return int64(uint64(high)<<32 | uint64(uint32(low))), nil
+}
+
+func walkAffectedDirectory(ctx context.Context, path string) (*Scan, error) {
+	return walkWindowsDirectory(ctx, path, nil, 4)
 }

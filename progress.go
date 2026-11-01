@@ -8,6 +8,7 @@ type ScanProgress struct {
 	Path                            string
 	Files, Folders, Errors, Skipped int
 	Bytes                           int64
+	Completed, Total                int
 }
 
 func scanReporter(s *Scan, callback func(ScanProgress)) func(string, bool) {

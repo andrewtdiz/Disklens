@@ -1,6 +1,7 @@
 param([string]$Folder)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+& (Join-Path $PSScriptRoot 'build-resources.ps1')
 $goCommand = Get-Command go -ErrorAction SilentlyContinue
 if ($goCommand) {
     $goBinary = $goCommand.Source

@@ -47,9 +47,9 @@ func TestScannerFilesystem(t *testing.T) {
 	h := sha256.New()
 	var visit func(*Node)
 	visit = func(n *Node) {
-		rel, _ := filepath.Rel(s.Root.Path, n.Path)
+		rel, _ := filepath.Rel(s.Root.FullPath(), n.FullPath())
 		fmt.Fprintf(h, "%s\x00%d\x00%t\n", rel, n.Size, n.Dir)
-		for _, child := range n.Children {
+		for _, child := range n.Children() {
 			visit(child)
 		}
 	}
@@ -121,7 +121,17 @@ func TestScannerAllocationAndCancellation(t *testing.T) {
 		t.Fatal(s.FirstError)
 	}
 	expected := int64(0)
-	for _, n := range s.Root.Children {
+	for _, n := range s.Root.Children() {
+		info, err := os.Stat(n.FullPath())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !n.Modified.Time().Equal(info.ModTime()) {
+			t.Fatalf("Modification timestamp changed for %s: %v != %v", n.Name, n.Modified.Time(), info.ModTime())
+		}
+		if n.folder != nil {
+			t.Fatalf("File %s allocated directory-only storage", n.Name)
+		}
 		if n.Name == "z-link.bin" {
 			if n.Size != 0 {
 				t.Fatal("hardlink counted twice")
@@ -130,9 +140,9 @@ func TestScannerAllocationAndCancellation(t *testing.T) {
 		}
 		var size int64
 		if n.Name == "ordinary.bin" {
-			size, _, err = diskSize(n.Path, nil)
+			size, _, err = diskSize(n.FullPath(), nil)
 		} else {
-			size, err = compressedAllocation(n.Path)
+			size, err = compressedAllocation(n.FullPath())
 		}
 		if err != nil {
 			t.Fatal(err)

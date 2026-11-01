@@ -24,13 +24,16 @@ func walkDirectoryPortable(ctx context.Context, path string, progress func(ScanP
 	}
 	s := &Scan{Backend: "Directory", At: time.Now()}
 	report := scanReporter(s, progress)
-	seen := map[string]bool{}
+	seen := map[string]*Node{}
 	var walk func(string, os.FileInfo, *Node, float64, float64) (*Node, error)
 	walk = func(path string, info os.FileInfo, parent *Node, start, span float64) (*Node, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		n := &Node{Name: info.Name(), Path: path, Dir: info.IsDir(), Modified: info.ModTime(), Parent: parent}
+		n := &Node{Name: info.Name(), Dir: info.IsDir(), Modified: timestampFromTime(info.ModTime()), Parent: parent}
+		if parent == nil {
+			n.Name = path
+		}
 		if !n.Dir {
 			s.Files++
 			s.FileQueries++
@@ -39,11 +42,13 @@ func walkDirectoryPortable(ctx context.Context, path string, progress func(ScanP
 				s.recordError(path, err)
 				return n, nil
 			}
-			if identity == "" || !seen[identity] {
+			if identity == "" || seen[identity] == nil {
 				n.Size = size
 				if identity != "" {
-					seen[identity] = true
+					seen[identity] = n
 				}
+			} else {
+				retainLinks(seen[identity], n)
 			}
 			s.Bytes += n.Size
 			if s.Files%256 == 0 {
@@ -78,10 +83,10 @@ func walkDirectoryPortable(ctx context.Context, path string, progress func(ScanP
 			if err != nil {
 				return nil, err
 			}
-			n.Children = append(n.Children, child)
+			n.addChild(child)
 			n.Size += child.Size
 		}
-		sortNodes(n.Children)
+		sortNodes(n.Children())
 		return n, nil
 	}
 	s.Root, err = walk(path, info, nil, 0, 1)

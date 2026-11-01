@@ -79,7 +79,7 @@ func TestNTFSImageFilesystem(t *testing.T) {
 				count++
 			}
 		}
-		for _, c := range n.Children {
+		for _, c := range n.Children() {
 			next := c.Name
 			if path != "" {
 				next = path + "/" + next
@@ -88,8 +88,8 @@ func TestNTFSImageFilesystem(t *testing.T) {
 		}
 	}
 	visit(s.Root, "")
-	for _, child := range s.Root.Children {
-		if !child.Dir || len(child.Children) == 0 {
+	for _, child := range s.Root.Children() {
+		if !child.Dir || len(child.Children()) == 0 {
 			continue
 		}
 		entry, err := root.Open(ntfs, child.Name)
@@ -101,7 +101,7 @@ func TestNTFSImageFilesystem(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if sub.Root.Size != child.Size || len(sub.Root.Children) != len(child.Children) {
+		if sub.Root.Size != child.Size || len(sub.Root.Children()) != len(child.Children()) {
 			t.Fatal("Subtree selection differs from whole-image scan")
 		}
 		break

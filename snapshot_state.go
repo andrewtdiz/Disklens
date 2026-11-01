@@ -125,8 +125,8 @@ func snapshotDiff(state *SnapshotState) DiffReport {
 
 func clearComparison(root *Node) {
 	root.Compared, root.Delta = false, 0
-	children := root.Children[:0]
-	for _, child := range root.Children {
+	children := root.Children()[:0]
+	for _, child := range root.Children() {
 		if child.Removed {
 			continue
 		}
@@ -135,8 +135,8 @@ func clearComparison(root *Node) {
 		}
 		children = append(children, child)
 	}
-	clear(root.Children[len(children):])
-	root.Children = children
+	clear(root.Children()[len(children):])
+	root.setChildren(children)
 }
 
 func compareSaved(root *Node, state *SnapshotState) {

@@ -4,7 +4,9 @@ package main
 
 import (
 	"hash/fnv"
+	"math"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/egoist/mygo/ui"
@@ -17,6 +19,38 @@ type tile struct {
 }
 
 var palette = []ui.Color{ui.Hex("#4040ff"), ui.Hex("#ff4040"), ui.Hex("#40ef40"), ui.Hex("#efef40"), ui.Hex("#40eeee"), ui.Hex("#ef40ef"), ui.Hex("#efa850"), ui.Hex("#4095ff"), ui.Hex("#ff4095"), ui.Hex("#95ef40"), ui.Hex("#a040ff"), ui.Hex("#40ef95"), ui.Hex("#ff40b0"), ui.Hex("#40b0ef"), ui.Hex("#ef8540"), ui.Hex("#40efb0"), ui.Hex("#8540ff"), ui.Hex("#c0c0c0")}
+
+func extensionColors(root *Node) map[string]ui.Color {
+	bytes := make(map[string]int64)
+	var visit func(*Node)
+	visit = func(n *Node) {
+		if n.Removed {
+			return
+		}
+		if !n.Dir {
+			bytes[strings.ToLower(filepath.Ext(n.Name))] += n.Size
+		}
+		for _, child := range n.Children() {
+			visit(child)
+		}
+	}
+	visit(root)
+	extensions := make([]string, 0, len(bytes))
+	for ext := range bytes {
+		extensions = append(extensions, ext)
+	}
+	sort.Slice(extensions, func(i, j int) bool {
+		if bytes[extensions[i]] == bytes[extensions[j]] {
+			return extensions[i] < extensions[j]
+		}
+		return bytes[extensions[i]] > bytes[extensions[j]]
+	})
+	colors := make(map[string]ui.Color, len(bytes))
+	for rank, ext := range extensions {
+		colors[ext] = cushionPalette[min(rank, len(cushionPalette)-1)]
+	}
+	return colors
+}
 
 func nodeColor(n *Node) ui.Color {
 	if n.Removed {
@@ -38,12 +72,12 @@ func layoutMap(root *Node, w, h float32) []tile {
 		if r.W < 1 || r.H < 1 || n.Size == 0 {
 			return
 		}
-		if len(n.Children) == 0 || r.W*r.H < 180 || r.W < 10 || r.H < 10 {
+		if len(n.Children()) == 0 {
 			out = append(out, tile{n, r, false})
 			return
 		}
 		out = append(out, tile{n, r, true})
-		positive := n.Children
+		positive := n.Children()
 		end := len(positive)
 		for end > 0 && positive[end-1].Size == 0 {
 			end--
@@ -78,11 +112,11 @@ func layoutMap(root *Node, w, h float32) []tile {
 		fraction := float32(float64(sum) / float64(total))
 		a, b := r, r
 		if r.W >= r.H {
-			a.W = r.W * fraction
+			a.W = float32(math.Round(float64(r.W * fraction)))
 			b.X += a.W
 			b.W -= a.W
 		} else {
-			a.H = r.H * fraction
+			a.H = float32(math.Round(float64(r.H * fraction)))
 			b.Y += a.H
 			b.H -= a.H
 		}
@@ -126,8 +160,12 @@ func (a *app) mapView(c *ui.Context) {
 		} else {
 			r := box.Bounds()
 			if a.mapRoot != a.focus || a.mapWidth != r.W || a.mapHeight != r.H {
+				if a.mapColorRoot != a.scan.Root {
+					a.mapColors = extensionColors(a.scan.Root)
+					a.mapColorRoot = a.scan.Root
+				}
 				a.tiles = layoutMap(a.focus, r.W, r.H)
-				a.mapBitmap = shadeMap(a.tiles, r.W, r.H)
+				a.mapBitmap = shadeMap(a.tiles, r.W, r.H, a.mapColors)
 				a.mapRoot, a.mapWidth, a.mapHeight = a.focus, r.W, r.H
 			}
 			x, y, over := box.PointerPosition()
@@ -174,7 +212,7 @@ func (a *app) mapView(c *ui.Context) {
 				n = a.selected
 			}
 			if n != nil {
-				ui.Text(c, n.Path).SingleLine().Grow(1).FontSize(11).TextColor(c.Theme().TextMuted)
+				ui.Text(c, n.FullPath()).SingleLine().Grow(1).FontSize(11).TextColor(c.Theme().TextMuted)
 				ui.Text(c, formatSize(n.Size)).FontSize(11)
 			} else {
 				ui.Text(c, "Area represents allocated size · colors group file extensions").FontSize(11).TextColor(c.Theme().TextMuted)

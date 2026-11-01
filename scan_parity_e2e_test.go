@@ -40,11 +40,11 @@ func TestScannerBackendParity(t *testing.T) {
 	missing, added := 0, 0
 	var compare func(*Node, *Node)
 	compare = func(a, b *Node) {
-		byName := make(map[string]*Node, len(a.Children))
-		for _, c := range a.Children {
+		byName := make(map[string]*Node, len(a.Children()))
+		for _, c := range a.Children() {
 			byName[c.Name] = c
 		}
-		for _, c := range b.Children {
+		for _, c := range b.Children() {
 			prior := byName[c.Name]
 			delete(byName, c.Name)
 			if prior == nil {
@@ -54,7 +54,7 @@ func TestScannerBackendParity(t *testing.T) {
 			if prior.Dir && c.Dir {
 				compare(prior, c)
 			} else if prior.Size != c.Size {
-				differences = append(differences, difference{c.Path, prior.Size, c.Size})
+				differences = append(differences, difference{c.FullPath(), prior.Size, c.Size})
 			}
 		}
 		missing += len(byName)

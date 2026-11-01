@@ -9,6 +9,7 @@
 *.so
 *.test
 *.test.exe
+*.syso
 *.pprof
 *.prof
 /coverage.out

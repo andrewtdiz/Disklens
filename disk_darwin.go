@@ -23,3 +23,7 @@ func diskSize(path string, info os.FileInfo) (int64, string, error) {
 	}
 	return stat.Blocks * 512, key, nil
 }
+
+func walkAffectedDirectory(ctx context.Context, path string) (*Scan, error) {
+	return walkDirectoryPortable(ctx, path, nil)
+}

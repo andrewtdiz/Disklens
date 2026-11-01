@@ -13,16 +13,90 @@ import (
 )
 
 type Node struct {
-	Name     string
-	Path     string
-	Size     int64
-	Modified time.Time
-	Dir      bool
-	Children []*Node
-	Parent   *Node
-	Delta    int64
-	Compared bool
-	Removed  bool
+	Name                   string
+	Size                   int64
+	Modified               fileTimestamp
+	folder                 *directoryEntries
+	Parent                 *Node
+	Delta                  int64
+	Links                  *fileLinks
+	Dir, Compared, Removed bool
+}
+
+type directoryEntries struct {
+	children []*Node
+}
+
+func (n *Node) Children() []*Node {
+	if n.folder == nil {
+		return nil
+	}
+	return n.folder.children
+}
+
+func (n *Node) addChild(child *Node) {
+	if n.folder == nil {
+		n.folder = &directoryEntries{}
+	}
+	n.folder.children = append(n.folder.children, child)
+}
+
+func (n *Node) setChildren(children []*Node) {
+	if len(children) == 0 {
+		n.folder = nil
+		return
+	}
+	if n.folder == nil {
+		n.folder = &directoryEntries{}
+	}
+	n.folder.children = children
+}
+
+type fileTimestamp uint64
+
+func timestampFromTime(value time.Time) fileTimestamp {
+	if value.IsZero() {
+		return 0
+	}
+	return fileTimestamp(uint64(value.Unix()+11644473600)*10000000 + uint64(value.Nanosecond()/100) + 1)
+}
+
+func timestampFromNTFS(ticks uint64) fileTimestamp {
+	return fileTimestamp(ticks + 1)
+}
+
+func (stamp fileTimestamp) Time() time.Time {
+	if stamp == 0 {
+		return time.Time{}
+	}
+	ticks := uint64(stamp) - 1
+	return time.Unix(int64(ticks/10000000)-11644473600, int64(ticks%10000000)*100).Local()
+}
+
+func (n *Node) FullPath() string {
+	if n.Parent == nil {
+		return n.Name
+	}
+	parts := make([]string, 0, 16)
+	for p := n; p != nil; p = p.Parent {
+		parts = append(parts, p.Name)
+	}
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return filepath.Join(parts...)
+}
+
+type fileLinks struct {
+	Nodes []*Node
+}
+
+func retainLinks(previous, next *Node) {
+	if previous.Links == nil {
+		previous.Links = &fileLinks{Nodes: []*Node{previous}}
+	}
+	next.Links = previous.Links
+	next.Links.Nodes = append(next.Links.Nodes, next)
 }
 
 type Scan struct {
@@ -75,15 +149,15 @@ func sortNodes(nodes []*Node) {
 }
 
 func takeSnapshot(s *Scan, depth int) *Snapshot {
-	out := &Snapshot{Root: s.Root.Path, Depth: depth, At: s.At, Directories: map[string]Entry{}}
+	out := &Snapshot{Root: s.Root.FullPath(), Depth: depth, At: s.At, Directories: map[string]Entry{}}
 	var visit func(*Node, int)
 	visit = func(n *Node, level int) {
 		if !n.Dir || n.Removed || level > depth {
 			return
 		}
-		rel, _ := filepath.Rel(s.Root.Path, n.Path)
-		out.Directories[rel] = Entry{n.Size, n.Modified}
-		for _, child := range n.Children {
+		rel, _ := filepath.Rel(s.Root.FullPath(), n.FullPath())
+		out.Directories[rel] = Entry{n.Size, n.Modified.Time()}
+		for _, child := range n.Children() {
 			visit(child, level+1)
 		}
 	}
@@ -100,7 +174,7 @@ func compare(root *Node, old *Snapshot) {
 		previous := old.Directories[rel]
 		n.Compared = true
 		n.Delta = n.Size - previous.Size
-		for _, child := range n.Children {
+		for _, child := range n.Children() {
 			visit(child, filepath.Join(rel, child.Name), level+1)
 		}
 	}
@@ -111,9 +185,9 @@ func compare(root *Node, old *Snapshot) {
 		if !n.Dir || depth > old.Depth {
 			return
 		}
-		rel, _ := filepath.Rel(root.Path, n.Path)
+		rel, _ := filepath.Rel(root.FullPath(), n.FullPath())
 		current[rel] = n
-		for _, c := range n.Children {
+		for _, c := range n.Children() {
 			index(c, depth+1)
 		}
 	}
@@ -132,8 +206,8 @@ func compare(root *Node, old *Snapshot) {
 			continue
 		}
 		entry := old.Directories[rel]
-		n := &Node{Name: filepath.Base(rel), Path: filepath.Join(root.Path, rel), Dir: true, Parent: parent, Modified: entry.Modified, Delta: -entry.Size, Compared: true, Removed: true}
-		parent.Children = append(parent.Children, n)
+		n := &Node{Name: filepath.Base(rel), Dir: true, Parent: parent, Modified: timestampFromTime(entry.Modified), Delta: -entry.Size, Compared: true, Removed: true}
+		parent.addChild(n)
 		current[rel] = n
 	}
 }
@@ -141,6 +215,11 @@ func compare(root *Node, old *Snapshot) {
 func dataDirectory() string {
 	if dir := os.Getenv("DISKLENS_DATA"); dir != "" {
 		return dir
+	}
+	if runtime.GOOS == "windows" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, ".disklens")
+		}
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
