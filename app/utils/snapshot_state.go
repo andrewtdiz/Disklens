@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
@@ -21,9 +20,17 @@ type DirectoryChange struct {
 	DeltaBytes int64  `json:"delta_bytes"`
 	Kind       string `json:"kind"`
 	Path       string `json:"path"`
+	Scope      string `json:"scope"`
+	Uncertain  bool   `json:"uncertain"`
 }
 
 type DiffSummary struct {
+	BaselineOnly              bool      `json:"baseline_only"`
+	NetBytes                  int64     `json:"net_bytes"`
+	IncreasedBytes            int64     `json:"increased_bytes"`
+	DecreasedBytes            int64     `json:"decreased_bytes"`
+	UncertainBytes            int64     `json:"uncertain_bytes"`
+	CoverageDetailsAvailable  bool      `json:"coverage_details_available"`
 	Partial                   bool      `json:"partial"`
 	BaselineUnreadableEntries int       `json:"baseline_unreadable_entries"`
 	LatestUnreadableEntries   int       `json:"latest_unreadable_entries"`
@@ -76,58 +83,29 @@ func LoadSnapshotState(root string) (*SnapshotState, error) {
 func SnapshotDiff(state *SnapshotState) DiffReport {
 	old, latest := state.Baseline, state.Latest
 	depth := min(old.Depth, latest.Depth)
-	report := DiffReport{DiffSummary: DiffSummary{Partial: old.UnreadableEntries > 0 || latest.UnreadableEntries > 0, BaselineUnreadableEntries: old.UnreadableEntries, LatestUnreadableEntries: latest.UnreadableEntries, Status: "ok", Root: latest.Root, BaselineAt: old.At.UTC(), ScannedAt: latest.At.UTC(), Depth: depth, SizeBasis: "allocated_bytes", IncludesDescendants: true}, Changes: []DirectoryChange{}}
-	keys := make(map[string]struct{}, len(old.Directories)+len(latest.Directories))
-	for path := range old.Directories {
-		keys[path] = struct{}{}
+	report := DiffReport{DiffSummary: DiffSummary{
+		Partial:                   old.UnreadableEntries > 0 || latest.UnreadableEntries > 0,
+		BaselineUnreadableEntries: old.UnreadableEntries, LatestUnreadableEntries: latest.UnreadableEntries,
+		Status: "ok", Root: latest.Root, BaselineAt: old.At.UTC(), ScannedAt: latest.At.UTC(),
+		Depth: depth, SizeBasis: "allocated_bytes", IncludesDescendants: false,
+		BaselineOnly: old.At.Equal(latest.At), CoverageDetailsAvailable: coverageAvailable(old) && coverageAvailable(latest),
+		NetBytes: latest.Directories["."].Size - old.Directories["."].Size,
+	}, Changes: []DirectoryChange{}}
+	report.Changes = ContributionRows(state, "", false)
+	for _, change := range report.Changes {
+		if change.Uncertain {
+			report.UncertainBytes += change.DeltaBytes
+		} else if change.DeltaBytes > 0 {
+			report.IncreasedBytes += change.DeltaBytes
+		} else {
+			report.DecreasedBytes -= change.DeltaBytes
+		}
 	}
-	for path := range latest.Directories {
-		keys[path] = struct{}{}
-	}
-	for path := range keys {
-		level := 0
-		if path != "." {
-			level = strings.Count(path, string(filepath.Separator)) + 1
-		}
-		if level > depth {
-			continue
-		}
-		before, existed := old.Directories[path]
-		after, exists := latest.Directories[path]
-		delta := after.Size - before.Size
-		if delta == 0 {
-			continue
-		}
-		kind := "modified"
-		if !existed {
-			kind = "added"
-		} else if !exists {
-			kind = "removed"
-		}
-		display := "+" + FormatSize(delta)
-		if delta < 0 {
-			display = "-" + FormatSize(-delta)
-		}
-		report.Changes = append(report.Changes, DirectoryChange{Delta: display, DeltaBytes: delta, Kind: kind, Path: filepath.Join(latest.Root, path)})
-	}
-	magnitude := func(value int64) int64 {
-		if value < 0 {
-			return -value
-		}
-		return value
-	}
-	sort.Slice(report.Changes, func(i, j int) bool {
-		a, b := report.Changes[i], report.Changes[j]
-		if magnitude(a.DeltaBytes) == magnitude(b.DeltaBytes) {
-			return a.Path < b.Path
-		}
-		return magnitude(a.DeltaBytes) > magnitude(b.DeltaBytes)
-	})
 	return report
 }
 
 func ClearComparison(root *Node) {
-	root.Compared, root.Delta = false, 0
+	root.Compared, root.Delta, root.Uncertain = false, 0, false
 	children := root.Children()[:0]
 	for _, child := range root.Children() {
 		if child.Removed {
@@ -159,4 +137,21 @@ func CompareSaved(root *Node, state *SnapshotState) {
 		}
 	}
 	compare(root, &baseline)
+	if state.Baseline.UnreadableEntries == 0 && state.Latest.UnreadableEntries == 0 {
+		return
+	}
+	uncertain := comparisonCoverage(state)
+	var mark func(*Node, string, int)
+	mark = func(n *Node, relative string, level int) {
+		if level > baseline.Depth {
+			return
+		}
+		n.Uncertain = uncertain(relative)
+		for _, child := range n.Children() {
+			if child.Dir {
+				mark(child, filepath.Join(relative, child.Name), level+1)
+			}
+		}
+	}
+	mark(root, ".", 0)
 }

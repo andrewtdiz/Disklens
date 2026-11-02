@@ -40,7 +40,7 @@ func (a *app) view(c *ui.Context) {
 	}
 	ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
 		a.toolbar(c)
-		ui.SplitVerticalPercent(c, &a.split, func() { a.tree(c) }, func() { a.mapView(c) }).Grow(1)
+		ui.SplitVerticalPercent(c, &a.split, func() { a.insights(c) }, func() { a.mapView(c) }).Grow(1)
 		ui.Row(c).Height(32).Padding(0, 16).Gap(12).AlignItems(ui.Center).Background(ui.Hex("#252525")).Children(func() {
 			text := a.status
 			if a.busy {
@@ -123,10 +123,10 @@ func (a *app) toolbar(c *ui.Context) {
 				a.status = err.Error()
 			} else if len(paths) > 0 {
 				a.settings.Path = paths[0]
-				a.status = "Folder selected - Refresh to scan"
+				a.status = "Folder selected — Scan to begin"
 			}
 		}
-		ui.Text(c, "Depth").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "History depth").FontSize(12).TextColor(c.Theme().TextMuted)
 		previousDepth := a.depth
 		input := ui.TextInput(c.Key("depth"), &a.depthText).Label("Snapshot depth").Width(36).Height(26).Disabled(a.busy).Tooltip("Directory levels saved below the scan root (1-50).")
 		if input.Changed() {
@@ -151,17 +151,24 @@ func (a *app) toolbar(c *ui.Context) {
 				a.status = err.Error()
 			}
 		}
-		ui.Row(c.Key("scan-actions")).Width(190).Shrink(0).Height(26).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Row(c.Key("scan-actions")).Width(306).Shrink(0).Height(26).Gap(6).AlignItems(ui.Center).Children(func() {
 			if a.deleting {
-				if ui.Button(c.Key("cancel-delete"), "Cancel deletion").Width(190).Height(26).Clicked() {
+				if ui.Button(c.Key("cancel-delete"), "Cancel deletion").Width(306).Height(26).Clicked() {
 					a.cancel()
 				}
 			} else if a.busy {
-				if ui.Button(c.Key("cancel"), "Cancel scan").Width(190).Height(26).Padding(0, 8).Clicked() {
+				if ui.Button(c.Key("cancel"), "Cancel scan").Width(306).Height(26).Padding(0, 8).Clicked() {
 					a.cancel()
 				}
 			} else {
-				if toolbarButton(c.Key("refresh"), "Refresh", "Refresh", refreshIcon, 84).Tooltip("Scan and compare with the fixed baseline - Ctrl/Cmd+R").Clicked() {
+				action := "Scan"
+				if a.savedState != nil && a.savedState.Baseline != nil {
+					path, _ := filepath.Abs(filepath.Clean(a.settings.Path))
+					if utils.SnapshotPath(path) == utils.SnapshotPath(a.savedState.Latest.Root) {
+						action = "Scan again and compare"
+					}
+				}
+				if toolbarButton(c.Key("refresh"), action, action, refreshIcon, 190).Tooltip("First scan creates a baseline; later scans compare against it — Ctrl/Cmd+R").Clicked() {
 					a.start()
 				}
 				canSet := a.savedState != nil && a.scan != nil
@@ -176,7 +183,7 @@ func (a *app) toolbar(c *ui.Context) {
 				} else if a.scan != nil {
 					hint = "Refresh this folder and save its scan before setting a baseline. Unreadable entries are allowed."
 				}
-				if ui.Button(c.Key("set-baseline"), "Set baseline").Height(26).Width(100).Padding(0, 6).Disabled(!canSet).Tooltip(hint).Clicked() {
+				if ui.Button(c.Key("set-baseline"), "Reset baseline").Height(26).Width(110).Padding(0, 6).Disabled(!canSet).Tooltip(hint).Clicked() {
 					a.setBaseline()
 				}
 			}
@@ -200,12 +207,12 @@ func (a *app) tree(c *ui.Context) {
 		if a.scan == nil {
 			ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
 				ui.Text(c, "See where your space goes.").FontSize(22)
-				ui.Text(c, "Choose a directory above and press Refresh.").TextColor(c.Theme().TextMuted)
-				ui.Text(c, "Set a baseline after scanning. Refresh compares future scans against it.").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "Choose a directory above and press Scan.").TextColor(c.Theme().TextMuted)
+				ui.Text(c, "Your first scan becomes the baseline. Scan again to measure changes.").FontSize(12).TextColor(c.Theme().TextMuted)
 			})
 			return
 		}
-		cols := []ui.TableColumn{{Title: "Name", MinWidth: 240}, {Title: "Size Proportion", Width: 120}, {Title: "Physical Size", Width: 125, Align: ui.End}, {Title: "Change", Width: 110, Align: ui.End}, {Title: "Last Change", Width: 160}}
+		cols := []ui.TableColumn{{Title: "Name", MinWidth: 240}, {Title: "Size Proportion", Width: 120}, {Title: "Physical Size", Width: 125, Align: ui.End}, {Title: "Change (inclusive)", Width: 140, Align: ui.End}, {Title: "Last Change", Width: 160}}
 		a.outline.Indent = 16
 		before := a.row
 		headerTheme := compact
@@ -255,7 +262,9 @@ func (a *app) cell(c *ui.Context, n *utils.Node, col int) {
 			if n.Parent == nil {
 				label = n.FullPath()
 			}
-			if n.Removed {
+			if n.Removed && n.Uncertain {
+				label += "  (missing; coverage uncertain)"
+			} else if n.Removed {
 				label += "  (removed)"
 			}
 			ui.Text(c, label).SingleLine().Tooltip(n.FullPath())
@@ -289,7 +298,12 @@ func (a *app) cell(c *ui.Context, n *utils.Node, col int) {
 		if n.Compared && n.Delta != 0 {
 			color = changeColor(n.Delta)
 		}
-		ui.Text(c, utils.FormatDelta(n)).TextColor(color).SingleLine()
+		label := utils.FormatDelta(n)
+		if n.Uncertain && n.Compared {
+			label += " ?"
+			color = c.Theme().TextMuted
+		}
+		ui.Text(c, label).TextColor(color).SingleLine().Tooltip("Inclusive total: includes descendants. ? indicates incomplete coverage; do not interpret it as confirmed growth or deletion.")
 	case 4:
 		ui.Text(c, n.Modified.Time().Format("1/2/2006  3:04 PM")).SingleLine()
 	}

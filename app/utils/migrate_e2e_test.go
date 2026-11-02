@@ -49,7 +49,7 @@ func TestStateMigrationCLIParity(t *testing.T) {
 	if err := json.Unmarshal(out, &report); err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Changes) != 2 || !report.BaselineAt.Equal(baseline.At) || !report.ScannedAt.Equal(latest.At) {
+	if len(report.Changes) != 1 || !report.BaselineAt.Equal(baseline.At) || !report.ScannedAt.Equal(latest.At) {
 		t.Fatalf("migration changed comparison: %+v", report)
 	}
 	for _, change := range report.Changes {

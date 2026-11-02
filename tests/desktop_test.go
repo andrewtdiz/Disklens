@@ -50,7 +50,7 @@ func TestDesktopBatchedDirectory(t *testing.T) {
 	c, _ := launch(t, exe, data, filepath.Join(base, "batch.sock"))
 	c.value("path", root)
 	c.press("refresh")
-	c.waitFor("No baseline - scan saved - depth 5")
+	c.waitFor("Baseline ready — scan again to measure changes")
 	c.waitFor("702 files")
 	c.waitFor("1 links / special entries skipped")
 	paths, _ := filepath.Glob(filepath.Join(data, "snapshots", "*.json"))
@@ -195,7 +195,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	c, process := launch(t, exe, data, filepath.Join(base, "app.sock"))
 	c.value("path", root)
 	c.press("refresh")
-	c.waitFor("No baseline - scan saved - depth 5")
+	c.waitFor("Baseline ready — scan again to measure changes")
 	paths, err := filepath.Glob(filepath.Join(data, "snapshots", "*.json"))
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("snapshots: %v %v", paths, err)
@@ -217,7 +217,9 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	if snap.Directories[filepath.Join("Deep", "one", "two", "three", "four")].Size != 32768 {
 		t.Fatal("deep file was not aggregated")
 	}
-	assertCLIError(t, data, "NO_BASELINE", root)
+	if first := readCLIReport(t, data, root); !first.BaselineOnly {
+		t.Fatal("first scan did not create baseline")
+	}
 	c.press("set-baseline")
 	c.waitFor("Baseline set")
 	initial := readCLIReport(t, data, root)
@@ -236,7 +238,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	c.press("refresh")
 	c.waitFor("Compared with")
 	report := readCLIReport(t, data, root)
-	if len(report.Changes) != 5 {
+	if len(report.Changes) != 4 {
 		t.Fatalf("unchanged directories leaked into diff: %+v", report)
 	}
 	if report.BaselineAt != initial.BaselineAt {
@@ -256,6 +258,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "unscanned.tmp")); err != nil {
 		t.Fatal(err)
 	}
+	c.press("tab-Explorer")
 	nodes := c.waitFor("Removed  (removed)")
 	for _, n := range nodes {
 		if n.Role == "treeItem" && (strings.Contains(n.Label, "%") || n.Bounds.Height > 24) {

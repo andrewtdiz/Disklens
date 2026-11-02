@@ -10,9 +10,9 @@ On Windows, run the release's setup `.exe`. It installs the desktop app; add its
 
 **Permissions:** Windows requests administrator access for fast NTFS scanning. On macOS, enable Disklens under **System Settings → Privacy & Security → Full Disk Access**, then reopen it to scan protected folders without repeated prompts.
 
-1. Choose a folder and click **Refresh** (`Ctrl+R` / `Cmd+R`).
-2. Click **Set baseline** to use the completed scan as your reference.
-3. Refresh later to compare changes: red means increased usage; green means freed space. The baseline stays fixed until you replace it.
+1. Choose a folder and click **Scan** (`Ctrl+R` / `Cmd+R`). Your first saved scan becomes the baseline.
+2. **Scan again and compare** to see non-overlapping growth contributors. Use **Group** for folder breakdowns and **Explore** for the inclusive directory tree.
+3. Inspect **Coverage** for unreadable paths. **Reset baseline** explicitly replaces your reference; ordinary scans preserve it.
 
 | Control | Behavior |
 | --- | --- |
@@ -27,7 +27,7 @@ On Windows, run the release's setup `.exe`. It installs the desktop app; add its
 ## Scans and saved data
 
 - Sizes represent allocated file bytes, not volume free space. Hard links count once; symlinks, Windows reparse points, and special entries are skipped. Shared APFS clone extents are not separately accounted for.
-- Unreadable entries produce a saved partial scan that can be set as a baseline. Partial scans and baselines are labeled; unreadable data is excluded, so access changes may appear as size changes. Files can change during a scan.
+- Unreadable entries produce a saved partial scan that can be set as a baseline. Partial scans and baselines are labeled; unreadable data is excluded, affected comparisons are marked uncertain (older snapshots without coverage paths make the whole comparison uncertain). Files can change during a scan.
 - Each root retains one latest successful scan and one baseline. Nothing is uploaded; there is no automatic rescanning. Large scans retain a full tree in memory.
 
 | Platform | Settings and snapshots |
@@ -40,14 +40,17 @@ Use `DISKLENS_DATA` to override the data directory for testing.
 ## CLI
 
 ```sh
+disklens scan /path/to/folder
+disklens diff /path/to/folder --refresh --json
 disklens diff /path/to/folder
-disklens diff /path/to/folder --json
+disklens coverage /path/to/folder
+disklens baseline /path/to/folder
 disklens --help
 ```
 
-The CLI reads saved comparisons; it does **not** scan. Create scans and baselines in the desktop app first. The default root is `C:\` on Windows and `/` on macOS. During a scan, it returns the previous saved comparison and reports scanning activity.
+CLI scans use the same native scanner and snapshots as the app. `scan` and `diff --refresh` save fresh results; plain `diff` only reads saved data. `baseline` adopts the latest saved scan. Use `--depth 1-50` when scanning to control retained history; the default is 5, or the previous scan’s depth. The default root is `C:\` on Windows and `/` on macOS. During a scan, it returns the previous saved comparison and reports scanning activity.
 
-Output includes timestamps and signed size changes; JSON includes exact byte counts. Directory totals include descendants—**do not sum overlapping entries**. Success exits 0; errors exit 1, with structured error codes when using `--json`.
+Output includes timestamps and signed size changes; JSON includes exact byte counts. CLI and Growth contributors are additive: direct-file rows exclude child directories, while subtree rows include everything below the saved depth limit. Explorer totals remain inclusive. Uncertain rows are separated from increases/decreases; all rows reconcile to observed net change. On Windows, launch the CLI elevated for fast NTFS access; otherwise it falls back to directory enumeration. On macOS, CLI access depends on the launching terminal’s permissions. Progress goes to stderr; partial scans succeed with explicit coverage metadata. Success exits 0; errors exit 1, with structured error codes when using `--json`.
 
 ## Build
 

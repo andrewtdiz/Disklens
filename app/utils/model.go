@@ -15,6 +15,7 @@ type Node struct {
 	Delta                  int64
 	Links                  *fileLinks
 	Dir, Compared, Removed bool
+	Uncertain              bool
 }
 
 type directoryEntries struct {
@@ -104,6 +105,7 @@ type Scan struct {
 	Skipped          int
 	Errors           int
 	FirstError       string
+	Issues           []ScanIssue
 	At               time.Time
 	DirectoryBatches int
 	FileQueries      int
@@ -114,7 +116,13 @@ type Entry struct {
 	Modified time.Time `json:"modified"`
 }
 
+type ScanIssue struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
 type Snapshot struct {
+	Issues            []ScanIssue      `json:"issues,omitempty"`
 	UnreadableEntries int              `json:"unreadable_entries,omitempty"`
 	Root              string           `json:"root"`
 	Depth             int              `json:"depth"`
@@ -129,6 +137,7 @@ type Settings struct {
 
 func (s *Scan) RecordError(path string, err error) {
 	s.Errors++
+	s.Issues = append(s.Issues, ScanIssue{Path: path, Reason: err.Error()})
 	if s.FirstError == "" {
 		s.FirstError = path + ": " + err.Error()
 	}

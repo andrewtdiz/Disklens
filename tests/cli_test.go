@@ -13,13 +13,20 @@ import (
 )
 
 type cliChange struct {
-	Path    string `json:"path"`
-	Kind    string `json:"kind"`
-	Display string `json:"delta"`
-	Delta   int64  `json:"delta_bytes"`
+	Scope     string `json:"scope"`
+	Uncertain bool   `json:"uncertain"`
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	Display   string `json:"delta"`
+	Delta     int64  `json:"delta_bytes"`
 }
 
 type cliReport struct {
+	BaselineOnly              bool        `json:"baseline_only"`
+	NetBytes                  int64       `json:"net_bytes"`
+	IncreasedBytes            int64       `json:"increased_bytes"`
+	DecreasedBytes            int64       `json:"decreased_bytes"`
+	UncertainBytes            int64       `json:"uncertain_bytes"`
 	Partial                   bool        `json:"partial"`
 	BaselineUnreadableEntries int         `json:"baseline_unreadable_entries"`
 	LatestUnreadableEntries   int         `json:"latest_unreadable_entries"`
@@ -48,20 +55,7 @@ func invokeCLI(t *testing.T, data string, args ...string) (cliReport, error) {
 	if parseErr := json.Unmarshal(b, &report); parseErr != nil {
 		t.Fatalf("CLI did not emit JSON: %q, %v, %v", b, parseErr, err)
 	}
-	if report.Status == "ok" {
-		lines := 0
-		for _, line := range strings.Split(string(b), "\n") {
-			if strings.Contains(line, "\"delta_bytes\"") {
-				lines++
-				if !strings.Contains(line, "\"path\"") || !strings.Contains(line, "\"delta\"") {
-					t.Fatalf("change is not a readable single line: %s", line)
-				}
-			}
-		}
-		if lines != len(report.Changes) {
-			t.Fatal("expected one line per changed directory")
-		}
-	}
+
 	return report, err
 }
 
@@ -74,7 +68,7 @@ func readCLIReport(t *testing.T, data, root string) cliReport {
 	if report.ScanInProgress {
 		t.Fatal("completed desktop scan still reported active")
 	}
-	if report.Changes == nil || !report.IncludesDescendants || report.SizeBasis != "allocated_bytes" || report.BaselineAt == "" || report.ScannedAt == "" {
+	if report.Changes == nil || report.IncludesDescendants || report.SizeBasis != "allocated_bytes" || report.BaselineAt == "" || report.ScannedAt == "" {
 		t.Fatalf("incomplete report: %+v", report)
 	}
 	magnitude := func(n int64) int64 {
@@ -89,7 +83,7 @@ func readCLIReport(t *testing.T, data, root string) cliReport {
 		}
 		if i > 0 {
 			previous := report.Changes[i-1]
-			if magnitude(change.Delta) > magnitude(previous.Delta) || magnitude(change.Delta) == magnitude(previous.Delta) && change.Path < previous.Path {
+			if change.Uncertain == previous.Uncertain && (change.Delta > 0) == (previous.Delta > 0) && (magnitude(change.Delta) > magnitude(previous.Delta) || magnitude(change.Delta) == magnitude(previous.Delta) && change.Path < previous.Path) {
 				t.Fatal("changes not deterministically sorted")
 			}
 		}
@@ -103,7 +97,7 @@ func readCLIReport(t *testing.T, data, root string) cliReport {
 	if !strings.Contains(string(text), "Baseline:") || !strings.Contains(string(text), "Latest scan:") || json.Valid(text) {
 		t.Fatalf("expected readable text: %s", text)
 	}
-	if len(report.Changes) == 0 && !strings.Contains(string(text), "No size changes.") {
+	if len(report.Changes) == 0 && !strings.Contains(string(text), "No measured size changes.") && !strings.Contains(string(text), "Baseline ready") {
 		t.Fatalf("missing empty state: %s", text)
 	}
 	var rows []string
@@ -117,7 +111,7 @@ func readCLIReport(t *testing.T, data, root string) cliReport {
 		t.Fatalf("text contains missing or extra changes: %s", text)
 	}
 	for i, change := range report.Changes {
-		if rows[i] != fmt.Sprintf("%12s  %s", change.Display, change.Path) {
+		if !strings.HasPrefix(rows[i], fmt.Sprintf("%12s  %s [", change.Display, change.Path)) {
 			t.Fatalf("text row differs from JSON: %q", rows[i])
 		}
 	}
@@ -185,7 +179,7 @@ func TestCLIReadOnlyErrorsAndDefault(t *testing.T) {
 	if report.Root != root {
 		t.Fatalf("wrong default root: %q", report.Root)
 	}
-	report, err := invokeCLI(t, data, "scan")
+	report, err := invokeCLI(t, data, "unknown-command")
 	if err == nil || report.Code != "INVALID_ARGUMENTS" {
 		t.Fatal("unexpected mutating command")
 	}

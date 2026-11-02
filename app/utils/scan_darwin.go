@@ -1,5 +1,3 @@
-//go:build !cli
-
 package utils
 
 import (
@@ -255,6 +253,7 @@ func walkMacDirectoryWorkers(ctx context.Context, path string, progress func(Sca
 					return nil, err
 				}
 				s.Errors += result.scan.Errors
+				s.Issues = append(s.Issues, result.scan.Issues...)
 				if s.FirstError == "" {
 					s.FirstError = result.scan.FirstError
 				}

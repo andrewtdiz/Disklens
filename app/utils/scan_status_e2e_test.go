@@ -95,6 +95,14 @@ func TestScanStatusCLIIntegration(t *testing.T) {
 		file.Close()
 		t.Fatal("duplicate scan lock succeeded")
 	}
+	for _, command := range []string{"scan", "baseline"} {
+		cmd := exec.Command(cli, command, root, "--json")
+		output, err := cmd.Output()
+		var failure struct{ Code string }
+		if err == nil || json.Unmarshal(output, &failure) != nil || failure.Code != "SCAN_BUSY" {
+			t.Fatalf("concurrent %s not rejected: %s %v", command, output, err)
+		}
+	}
 	old := &Snapshot{Root: root, Depth: 5, At: time.Now().Add(-time.Hour), Directories: map[string]Entry{".": {Size: 4096}}}
 	latest := &Snapshot{Root: root, Depth: 5, At: time.Now(), Directories: map[string]Entry{".": {Size: 8192}}}
 	state := &SnapshotState{Version: 1, Latest: latest}

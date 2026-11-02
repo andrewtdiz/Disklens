@@ -1,5 +1,3 @@
-//go:build !cli
-
 package utils
 
 import (
@@ -31,7 +29,15 @@ func ScanAndSave(ctx context.Context, path string, depth int, publish func(ScanP
 			publish(p)
 			next := TakeSnapshot(s, depth)
 			next.At = time.Now()
+			if state.Baseline == nil && state.Latest != nil {
+				state.Baseline = state.Latest
+				r.Notice = "Previous saved scan selected as baseline"
+			}
 			state.Latest = next
+			if state.Baseline == nil {
+				state.Baseline = next
+				r.Notice = "Baseline created — scan again to measure changes"
+			}
 			if ctx.Err() != nil {
 				r.Err = ctx.Err()
 			} else {
@@ -42,7 +48,10 @@ func ScanAndSave(ctx context.Context, path string, depth int, publish func(ScanP
 				} else {
 					r.Saved, r.State = true, state
 					if s.Errors > 0 {
-						r.Notice = fmt.Sprintf("Partial scan saved · %d unreadable entries", s.Errors)
+						if r.Notice != "" {
+							r.Notice += " · "
+						}
+						r.Notice += fmt.Sprintf("Partial scan saved · %d unreadable entries", s.Errors)
 					}
 					CompareSaved(s.Root, state)
 				}
