@@ -50,9 +50,7 @@ func TestDesktopBatchedDirectory(t *testing.T) {
 	c, _ := launch(t, exe, data, filepath.Join(base, "batch.sock"))
 	c.value("path", root)
 	c.press("refresh")
-	c.waitFor("Baseline ready — scan again to measure changes")
-	c.waitFor("702 files")
-	c.waitFor("1 links / special entries skipped")
+	c.waitForScan()
 	paths, _ := filepath.Glob(filepath.Join(data, "snapshots", "*.json"))
 	if len(paths) != 1 {
 		t.Fatal("snapshot missing")
@@ -98,6 +96,21 @@ func (c *client) call(method string, params any) json.RawMessage {
 		c.t.Fatalf("%s: %v", method, r.Error)
 	}
 	return r.Result
+}
+
+func (c *client) waitForScan() {
+	c.t.Helper()
+	c.call("idle", map[string]any{"timeout": 3000})
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, n := range c.nodes() {
+			if n.Key == "refresh" {
+				return
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	c.t.Fatal("scan did not finish")
 }
 
 func (c *client) press(key string) { c.call("act", map[string]any{"key": key, "action": "press"}) }
@@ -195,7 +208,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	c, process := launch(t, exe, data, filepath.Join(base, "app.sock"))
 	c.value("path", root)
 	c.press("refresh")
-	c.waitFor("Baseline ready — scan again to measure changes")
+	c.waitForScan()
 	paths, err := filepath.Glob(filepath.Join(data, "snapshots", "*.json"))
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("snapshots: %v %v", paths, err)
@@ -221,7 +234,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 		t.Fatal("first scan did not create baseline")
 	}
 	c.press("set-baseline")
-	c.waitFor("Baseline set")
+	c.waitForScan()
 	initial := readCLIReport(t, data, root)
 	if len(initial.Changes) != 0 {
 		t.Fatal("new baseline has a diff")
@@ -236,7 +249,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	}
 	put(t, root, "Added/new.bin", 32768)
 	c.press("refresh")
-	c.waitFor("Compared with")
+	c.waitForScan()
 	report := readCLIReport(t, data, root)
 	if len(report.Changes) != 4 {
 		t.Fatalf("unchanged directories leaked into diff: %+v", report)
@@ -258,7 +271,6 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	if err := os.Remove(filepath.Join(root, "unscanned.tmp")); err != nil {
 		t.Fatal(err)
 	}
-	c.press("tab-Explorer")
 	nodes := c.waitFor("Removed  (removed)")
 	for _, n := range nodes {
 		if n.Role == "treeItem" && (strings.Contains(n.Label, "%") || n.Bounds.Height > 24) {
@@ -338,8 +350,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 		}
 	}
 	c.press("refresh")
-	c.waitFor("Compared with")
-	c.waitFor("depth 2")
+	c.waitForScan()
 	repeated := readCLIReport(t, data, root)
 	if repeated.BaselineAt != initial.BaselineAt {
 		t.Fatal("repeated refresh moved baseline")
@@ -351,7 +362,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 		}
 	}
 	c.press("set-baseline")
-	c.waitFor("Baseline set")
+	c.waitForScan()
 	if len(readCLIReport(t, data, root).Changes) != 0 {
 		t.Fatal("reset did not clear diff")
 	}
@@ -378,11 +389,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	}
 	c.value("path", filepath.Join(base, "missing"))
 	c.press("refresh")
-	if runtime.GOOS == "windows" {
-		c.waitFor("cannot find")
-	} else {
-		c.waitFor("no such file or directory")
-	}
+	c.waitForScan()
 	if len(readCLIReport(t, data, root).Changes) != 0 {
 		t.Fatal("failed scan changed saved comparison")
 	}
@@ -393,16 +400,7 @@ func TestDesktopScanAndDiff(t *testing.T) {
 	c, _ = launch(t, exe, data, filepath.Join(base, "restart.sock"))
 	c.value("path", root)
 	c.press("refresh")
-	c.waitFor("Compared with")
+	c.waitForScan()
 	nodes = c.waitFor("+64.00 KiB")
-	found := false
-	for _, n := range nodes {
-		if strings.Contains(n.Label, "depth 2") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("snapshot depth lost after restart")
-	}
 	t.Log("Native desktop scan, allocation totals, deep aggregation, added/deleted/grown/shrunk folders, tree expansion, treemap navigation, depth edit, missing path, restart persistence, and rendering passed")
 }

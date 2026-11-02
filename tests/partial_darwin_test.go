@@ -29,9 +29,9 @@ func TestDesktopPartialBaseline(t *testing.T) {
 	c, process := launch(t, exe, data, filepath.Join(base, "first.sock"))
 	c.value("path", root)
 	c.press("refresh")
-	c.waitFor("Partial scan saved")
+	c.waitForScan()
 	c.press("set-baseline")
-	c.waitFor("Partial baseline (1 unreadable entries)")
+	c.waitForScan()
 	check := func(wantLatest, wantBaseline int) {
 		t.Helper()
 		paths, _ := filepath.Glob(filepath.Join(data, "snapshots", "*.json"))
@@ -75,9 +75,9 @@ func TestDesktopPartialBaseline(t *testing.T) {
 	c, _ = launch(t, exe, data, filepath.Join(base, "second.sock"))
 	c.value("path", root)
 	c.press("refresh")
-	c.waitFor("Partial baseline (1 unreadable entries)")
+	c.waitForScan()
 	check(0, 1)
 	c.press("set-baseline")
-	c.waitFor("Baseline set")
+	c.waitForScan()
 	check(0, 0)
 }

@@ -157,7 +157,7 @@ func (a *app) mapView(c *ui.Context) {
 		})
 		if a.focus == nil || a.focus.Size == 0 {
 			box.Children(func() {
-				ui.Column(c).Fill().Center().Children(func() { ui.Text(c, "No allocated file data to display").TextColor(c.Theme().TextMuted) })
+				ui.Column(c).Fill().Center().Children(func() { ui.Text(c, "No files to display").TextColor(c.Theme().TextMuted) })
 			})
 		} else {
 			r := box.Bounds()
@@ -220,7 +220,7 @@ func (a *app) mapView(c *ui.Context) {
 				ui.Text(c, n.FullPath()).SingleLine().Grow(1).FontSize(11).TextColor(c.Theme().TextMuted)
 				ui.Text(c, utils.FormatSize(n.Size)).FontSize(11)
 			} else {
-				ui.Text(c, "Area represents allocated size · colors group file extensions").FontSize(11).TextColor(c.Theme().TextMuted)
+				ui.Box(c).Grow(1)
 			}
 		})
 	})

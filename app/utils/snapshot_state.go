@@ -91,7 +91,7 @@ func SnapshotDiff(state *SnapshotState) DiffReport {
 		BaselineOnly: old.At.Equal(latest.At), CoverageDetailsAvailable: coverageAvailable(old) && coverageAvailable(latest),
 		NetBytes: latest.Directories["."].Size - old.Directories["."].Size,
 	}, Changes: []DirectoryChange{}}
-	report.Changes = ContributionRows(state, "", false)
+	report.Changes = contributionRows(state)
 	for _, change := range report.Changes {
 		if change.Uncertain {
 			report.UncertainBytes += change.DeltaBytes

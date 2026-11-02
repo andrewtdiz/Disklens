@@ -10,9 +10,9 @@ On Windows, run the release's setup `.exe`. It installs the desktop app; add its
 
 **Permissions:** Windows requests administrator access for fast NTFS scanning. On macOS, enable Disklens under **System Settings → Privacy & Security → Full Disk Access**, then reopen it to scan protected folders without repeated prompts.
 
-1. Choose a folder and click **Scan** (`Ctrl+R` / `Cmd+R`). Your first saved scan becomes the baseline.
-2. **Scan again and compare** to see non-overlapping growth contributors. Use **Group** for folder breakdowns and **Explore** for the inclusive directory tree.
-3. Inspect **Coverage** for unreadable paths. **Reset baseline** explicitly replaces your reference; ordinary scans preserve it.
+1. Choose a folder and click **Refresh** (`Ctrl+R` / `Cmd+R`). The first saved scan becomes your baseline.
+2. Refresh later to compare changes in the directory tree and treemap.
+3. **Set baseline** replaces your reference explicitly. A `?` beside a change means scan coverage is incomplete; hover for details.
 
 | Control | Behavior |
 | --- | --- |
@@ -50,7 +50,7 @@ disklens --help
 
 CLI scans use the same native scanner and snapshots as the app. `scan` and `diff --refresh` save fresh results; plain `diff` only reads saved data. `baseline` adopts the latest saved scan. Use `--depth 1-50` when scanning to control retained history; the default is 5, or the previous scan’s depth. The default root is `C:\` on Windows and `/` on macOS. During a scan, it returns the previous saved comparison and reports scanning activity.
 
-Output includes timestamps and signed size changes; JSON includes exact byte counts. CLI and Growth contributors are additive: direct-file rows exclude child directories, while subtree rows include everything below the saved depth limit. Explorer totals remain inclusive. Uncertain rows are separated from increases/decreases; all rows reconcile to observed net change. On Windows, launch the CLI elevated for fast NTFS access; otherwise it falls back to directory enumeration. On macOS, CLI access depends on the launching terminal’s permissions. Progress goes to stderr; partial scans succeed with explicit coverage metadata. Success exits 0; errors exit 1, with structured error codes when using `--json`.
+Output includes timestamps and signed size changes; JSON includes exact byte counts. CLI contributors are additive: direct-file rows exclude child directories, while subtree rows include everything below the saved depth limit. Desktop directory totals remain inclusive. Uncertain rows are separated from increases/decreases; all rows reconcile to observed net change. On Windows, launch the CLI elevated for fast NTFS access; otherwise it falls back to directory enumeration. On macOS, CLI access depends on the launching terminal’s permissions. Progress goes to stderr; partial scans succeed with explicit coverage metadata. Success exits 0; errors exit 1, with structured error codes when using `--json`.
 
 ## Build
 

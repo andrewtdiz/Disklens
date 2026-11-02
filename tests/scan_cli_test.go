@@ -1,7 +1,6 @@
 package tests
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -146,58 +145,6 @@ func TestCLICoverageWorkflow(t *testing.T) {
 	for _, row := range restored.Changes {
 		if row.Path == blocked && !row.Uncertain {
 			t.Fatal("newly readable data labeled confirmed growth")
-		}
-	}
-}
-
-func TestDesktopGrowthContributors(t *testing.T) {
-	exe := os.Getenv("DISKLENS_EXE")
-	if exe == "" {
-		t.Skip("Requires desktop build")
-	}
-	base, err := os.MkdirTemp("", "dl-growth-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(base) })
-	root, data := filepath.Join(base, "files"), filepath.Join(base, "state")
-	put(t, root, "parent/growth/cache", 65536)
-	put(t, root, "parent/shrink/cache", 131072)
-	c, _ := launch(t, exe, data, filepath.Join(base, "growth.sock"))
-	c.value("path", root)
-	c.press("refresh")
-	c.waitFor("Baseline ready")
-	put(t, root, "parent/growth/cache", 131072)
-	put(t, root, "parent/shrink/cache", 65536)
-	c.press("refresh")
-	c.waitFor("Increases 64.00 KiB · Decreases 64.00 KiB")
-	c.waitFor("Observed net +0 B")
-	c.press("group-" + filepath.Join(root, "parent", "growth"))
-	c.waitFor("Whole subtree")
-	c.press("parent-contributors")
-	c.call("idle", map[string]any{"timeout": 3000})
-	c.press("expand-" + filepath.Join(root, "parent"))
-	c.waitFor("Whole subtree")
-	c.press("all-contributors")
-	c.waitFor("Direct files only")
-	c.press("explore-" + filepath.Join(root, "parent", "growth"))
-	c.waitFor("Change (inclusive)")
-	c.press("tab-Growth")
-	c.press("tab-Coverage")
-	c.waitFor("No unreadable entries")
-	c.press("tab-Growth")
-	c.call("idle", map[string]any{"timeout": 3000})
-	if capturePath := os.Getenv("DISKLENS_GROWTH_CAPTURE"); capturePath != "" {
-		var capture struct{ PNG string }
-		if err := json.Unmarshal(c.call("capture", nil), &capture); err != nil {
-			t.Fatal(err)
-		}
-		image, err := base64.StdEncoding.DecodeString(capture.PNG)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(capturePath, image, 0600); err != nil {
-			t.Fatal(err)
 		}
 	}
 }

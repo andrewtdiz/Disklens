@@ -31,14 +31,6 @@ type scanResult struct {
 }
 
 type app struct {
-	insightsTab       string
-	report            utils.DiffReport
-	contributors      []utils.DirectoryChange
-	contributionFocus string
-	contributionList  ui.ListState
-	coverageList      ui.ListState
-	coverageRows      []coverageRow
-
 	memory                  idleMemory
 	confirmDeletion         func(mygo.MessageOptions) (mygo.MessageResult, error)
 	deleteAnswers           chan deleteConfirmation
@@ -83,7 +75,7 @@ func newApp() *app {
 	if runtime.GOOS == "windows" {
 		root = `C:\`
 	}
-	a := &app{confirmDeletion: mygo.Dialog.Message, settings: utils.Settings{Path: root, Depth: 5}, split: 50, row: 0, status: "Choose a folder, then Scan. The first scan becomes your baseline."}
+	a := &app{confirmDeletion: mygo.Dialog.Message, settings: utils.Settings{Path: root, Depth: 5}, split: 50, row: 0, status: "Choose a folder, then Refresh to scan."}
 	if err := utils.MigrateState(); err != nil {
 		a.stateMigrationErr = err
 		a.status = "Could not migrate saved scans: " + err.Error()
@@ -230,7 +222,6 @@ func (a *app) poll(c *ui.Context) {
 			a.outline.Open.Add(a.scan.Root)
 		}
 		a.savedState = r.state
-		a.refreshInsights()
 		a.baseline = "Scan not saved"
 		if r.saved {
 			a.baseline = "No baseline - scan saved" + fmt.Sprintf(" - depth %d", r.state.Latest.Depth)

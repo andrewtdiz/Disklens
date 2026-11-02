@@ -58,7 +58,7 @@ func comparisonCoverage(state *SnapshotState) func(string) bool {
 	}
 }
 
-func ContributionRows(state *SnapshotState, focus string, grouped bool) []DirectoryChange {
+func contributionRows(state *SnapshotState) []DirectoryChange {
 	depth := min(state.Baseline.Depth, state.Latest.Depth)
 	totals := map[string]int64{}
 	for i, snapshot := range []*Snapshot{state.Baseline, state.Latest} {
@@ -82,21 +82,6 @@ func ContributionRows(state *SnapshotState, focus string, grouped bool) []Direct
 			residual[filepath.Dir(path)] -= delta
 		}
 	}
-	activity := map[string]bool{}
-	if grouped {
-		for path, delta := range residual {
-			if delta == 0 {
-				continue
-			}
-			for {
-				activity[path] = true
-				if path == "." {
-					break
-				}
-				path = filepath.Dir(path)
-			}
-		}
-	}
 	uncertain := comparisonCoverage(state)
 	rows := []DirectoryChange{}
 	for path, delta := range residual {
@@ -104,16 +89,7 @@ func ContributionRows(state *SnapshotState, focus string, grouped bool) []Direct
 		if directoryLevel(path) == depth {
 			scope = "subtree"
 		}
-		if grouped {
-			if path != focus && filepath.Dir(path) != focus {
-				continue
-			}
-			if path != focus {
-				delta = totals[path]
-				scope = "subtree"
-			}
-		}
-		if delta == 0 && !(grouped && path != focus && activity[path]) {
+		if delta == 0 {
 			continue
 		}
 		kind := "modified"

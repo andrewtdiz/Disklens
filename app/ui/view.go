@@ -40,55 +40,7 @@ func (a *app) view(c *ui.Context) {
 	}
 	ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
 		a.toolbar(c)
-		ui.SplitVerticalPercent(c, &a.split, func() { a.insights(c) }, func() { a.mapView(c) }).Grow(1)
-		ui.Row(c).Height(32).Padding(0, 16).Gap(12).AlignItems(ui.Center).Background(ui.Hex("#252525")).Children(func() {
-			text := a.status
-			if a.busy {
-				p := a.scanProgress
-				value := p.Fraction
-				label := p.Phase
-				if p.Phase != "Scanning" && p.Phase != "Reading NTFS" && p.Total == 0 {
-					value = -1
-					label = p.Phase
-				}
-				ui.Text(c.Key("scan-progress"), label).FontSize(11).SingleLine()
-				previousTheme := c.Theme()
-				meterTheme := *previousTheme
-				meterTheme.Accent = ui.Hex("#60a5fa")
-				c.SetTheme(&meterTheme)
-				detail := fmt.Sprintf("%s\n%d files | %s found\nEstimated traversal progress; branches vary in size", p.Path, p.Files, utils.FormatSize(p.Bytes))
-				if p.Phase == "Reading NTFS" {
-					detail = "Reading NTFS metadata for " + p.Path
-				}
-				if p.Total > 0 {
-					detail = fmt.Sprintf("%d / %d items processed\n%s", p.Completed, p.Total, p.Path)
-				}
-				ui.Progress(c.Key("scan-meter"), value).Grow(1).Height(8).Tooltip(detail)
-				c.SetTheme(previousTheme)
-				if value >= 0 {
-					percent := fmt.Sprintf("~%.0f%%", min(value*100, 99))
-					if p.Phase == "Reading NTFS" || p.Total > 0 {
-						percent = fmt.Sprintf("%.0f%%", value*100)
-					}
-					ui.Text(c.Key("scan-percent"), percent).FontSize(11).Width(42).SingleLine()
-				}
-				ui.Text(c, time.Since(a.scanStarted).Truncate(time.Second).String()).FontSize(11).TextColor(c.Theme().TextMuted).Width(55).SingleLine()
-				return
-			}
-			label := ui.Text(c, text).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine().Grow(1)
-			if a.scan != nil && a.scan.Errors > 0 {
-				label.Tooltip(a.scan.FirstError)
-			} else {
-				label.Tooltip(text)
-			}
-			backend := "LOCAL ONLY"
-			detail := ""
-			if a.scan != nil && a.scan.Backend != "" {
-				backend = a.scan.Backend
-				detail = a.scan.FallbackReason
-			}
-			ui.Text(c, backend).FontSize(10).TextColor(c.Theme().TextMuted).Tooltip(detail)
-		})
+		ui.SplitVerticalPercent(c, &a.split, func() { a.tree(c) }, func() { a.mapView(c) }).Grow(1)
 	})
 	if a.cleanupPending && !a.busy {
 		a.cleanupPending = false
@@ -123,12 +75,12 @@ func (a *app) toolbar(c *ui.Context) {
 				a.status = err.Error()
 			} else if len(paths) > 0 {
 				a.settings.Path = paths[0]
-				a.status = "Folder selected — Scan to begin"
+				a.status = "Folder selected - Refresh to scan"
 			}
 		}
-		ui.Text(c, "History depth").FontSize(12).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "Depth").FontSize(12).TextColor(c.Theme().TextMuted)
 		previousDepth := a.depth
-		input := ui.TextInput(c.Key("depth"), &a.depthText).Label("Snapshot depth").Width(36).Height(26).Disabled(a.busy).Tooltip("Directory levels saved below the scan root (1-50).")
+		input := ui.TextInput(c.Key("depth"), &a.depthText).Label("Snapshot depth").Width(36).Height(26).Disabled(a.busy).Tooltip("Folder levels retained for comparisons.")
 		if input.Changed() {
 			if value, err := strconv.Atoi(a.depthText); err == nil && value >= 1 && value <= 50 {
 				a.depth = float64(value)
@@ -151,39 +103,31 @@ func (a *app) toolbar(c *ui.Context) {
 				a.status = err.Error()
 			}
 		}
-		ui.Row(c.Key("scan-actions")).Width(306).Shrink(0).Height(26).Gap(6).AlignItems(ui.Center).Children(func() {
+		ui.Row(c.Key("scan-actions")).Width(190).Shrink(0).Height(26).Gap(6).AlignItems(ui.Center).Children(func() {
 			if a.deleting {
-				if ui.Button(c.Key("cancel-delete"), "Cancel deletion").Width(306).Height(26).Clicked() {
+				if ui.Button(c.Key("cancel-delete"), "Cancel deletion").Width(190).Height(26).Clicked() {
 					a.cancel()
 				}
 			} else if a.busy {
-				if ui.Button(c.Key("cancel"), "Cancel scan").Width(306).Height(26).Padding(0, 8).Clicked() {
+				if ui.Button(c.Key("cancel"), "Cancel scan").Width(190).Height(26).Padding(0, 8).Tooltip(a.scanProgress.Phase).Clicked() {
 					a.cancel()
 				}
 			} else {
-				action := "Scan"
-				if a.savedState != nil && a.savedState.Baseline != nil {
-					path, _ := filepath.Abs(filepath.Clean(a.settings.Path))
-					if utils.SnapshotPath(path) == utils.SnapshotPath(a.savedState.Latest.Root) {
-						action = "Scan again and compare"
-					}
-				}
-				if toolbarButton(c.Key("refresh"), action, action, refreshIcon, 190).Tooltip("First scan creates a baseline; later scans compare against it — Ctrl/Cmd+R").Clicked() {
+				if toolbarButton(c.Key("refresh"), "Refresh", "Refresh", refreshIcon, 84).Tooltip(a.status).Clicked() {
 					a.start()
 				}
 				canSet := a.savedState != nil && a.scan != nil
 				path, err := filepath.Abs(filepath.Clean(a.settings.Path))
 				canSet = canSet && err == nil && utils.SnapshotPath(path) == utils.SnapshotPath(a.scan.Root.FullPath())
-				hint := "Complete a scan before setting its baseline"
+				hint := "Scan this folder first."
 				if canSet {
-					hint = "Use the saved scan from " + a.savedState.Latest.At.Format("Jan 2, 15:04:05") + " as the baseline for " + a.scan.Root.FullPath()
+					hint = "Compare future scans against this scan."
 					if a.savedState.Latest.UnreadableEntries > 0 {
-						hint += fmt.Sprintf(". Partial scan: %d unreadable entries. You can set this baseline; unreadable data is excluded and access changes may appear as size changes.", a.savedState.Latest.UnreadableEntries)
+						hint += fmt.Sprintf(" %d unreadable entries excluded.", a.savedState.Latest.UnreadableEntries)
 					}
-				} else if a.scan != nil {
-					hint = "Refresh this folder and save its scan before setting a baseline. Unreadable entries are allowed."
 				}
-				if ui.Button(c.Key("set-baseline"), "Reset baseline").Height(26).Width(110).Padding(0, 6).Disabled(!canSet).Tooltip(hint).Clicked() {
+
+				if ui.Button(c.Key("set-baseline"), "Set baseline").Height(26).Width(100).Padding(0, 6).Disabled(!canSet).Tooltip(hint).Clicked() {
 					a.setBaseline()
 				}
 			}
@@ -200,19 +144,13 @@ func (a *app) tree(c *ui.Context) {
 	c.SetTheme(&compact)
 	defer c.SetTheme(previousTheme)
 	ui.Column(c).Fill().FontSize(12).Children(func() {
-		ui.Row(c).Height(28).Padding(2, 6).AlignItems(ui.Center).Gap(4).Children(func() {
-			ui.Box(c).Grow(1)
-			ui.Text(c, a.baseline).FontSize(11).TextColor(c.Theme().TextMuted).SingleLine()
-		})
 		if a.scan == nil {
 			ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
-				ui.Text(c, "See where your space goes.").FontSize(22)
-				ui.Text(c, "Choose a directory above and press Scan.").TextColor(c.Theme().TextMuted)
-				ui.Text(c, "Your first scan becomes the baseline. Scan again to measure changes.").FontSize(12).TextColor(c.Theme().TextMuted)
+				ui.Text(c, "Choose a folder to scan.").TextColor(c.Theme().TextMuted)
 			})
 			return
 		}
-		cols := []ui.TableColumn{{Title: "Name", MinWidth: 240}, {Title: "Size Proportion", Width: 120}, {Title: "Physical Size", Width: 125, Align: ui.End}, {Title: "Change (inclusive)", Width: 140, Align: ui.End}, {Title: "Last Change", Width: 160}}
+		cols := []ui.TableColumn{{Title: "Name", MinWidth: 240}, {Title: "Size Proportion", Width: 120}, {Title: "Physical Size", Width: 125, Align: ui.End}, {Title: "Change", Width: 110, Align: ui.End}, {Title: "Last Change", Width: 160}}
 		a.outline.Indent = 16
 		before := a.row
 		headerTheme := compact
@@ -263,7 +201,7 @@ func (a *app) cell(c *ui.Context, n *utils.Node, col int) {
 				label = n.FullPath()
 			}
 			if n.Removed && n.Uncertain {
-				label += "  (missing; coverage uncertain)"
+				label += "  (?)"
 			} else if n.Removed {
 				label += "  (removed)"
 			}
@@ -303,7 +241,7 @@ func (a *app) cell(c *ui.Context, n *utils.Node, col int) {
 			label += " ?"
 			color = c.Theme().TextMuted
 		}
-		ui.Text(c, label).TextColor(color).SingleLine().Tooltip("Inclusive total: includes descendants. ? indicates incomplete coverage; do not interpret it as confirmed growth or deletion.")
+		ui.Text(c, label).TextColor(color).SingleLine().Tooltip("Includes subfolders. ? = incomplete scan.")
 	case 4:
 		ui.Text(c, n.Modified.Time().Format("1/2/2006  3:04 PM")).SingleLine()
 	}

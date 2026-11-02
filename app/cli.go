@@ -234,32 +234,27 @@ func writeTextDiff(out io.Writer, report utils.DiffReport) error {
 	if report.ScanInProgress {
 		buffer.WriteString("Scan in progress - showing the last completed scan.\n")
 	}
-	fmt.Fprintf(&buffer, "%s — saved comparison\nBaseline: %s\nLatest scan: %s (%s ago)\n", report.Root, report.BaselineAt.Local().Format(time.RFC3339), report.ScannedAt.Local().Format(time.RFC3339), time.Since(report.ScannedAt).Truncate(time.Second))
-	fmt.Fprintf(&buffer, "Saved depth: %d · allocated bytes · %d unreadable entries in latest scan\n", report.Depth, report.LatestUnreadableEntries)
+	fmt.Fprintf(&buffer, "%s\nBaseline: %s · Latest scan: %s\n", report.Root, report.BaselineAt.Local().Format("Jan 2 15:04"), report.ScannedAt.Local().Format("Jan 2 15:04"))
 	if report.Partial {
-		fmt.Fprintf(&buffer, "Partial comparison: baseline %d unreadable entries; latest %d. Affected changes are uncertain. Use disklens coverage for paths.\n", report.BaselineUnreadableEntries, report.LatestUnreadableEntries)
-	}
-	if !report.CoverageDetailsAvailable {
-		buffer.WriteString("Older snapshot lacks coverage paths; all changes are marked uncertain.\n")
+		fmt.Fprintf(&buffer, "Partial comparison: %d unreadable (baseline %d). ? = uncertain.\n", report.LatestUnreadableEntries, report.BaselineUnreadableEntries)
 	}
 	if report.BaselineOnly {
 		buffer.WriteString("Baseline ready — scan again to measure changes.\n")
 	} else {
-		fmt.Fprintf(&buffer, "Increases: %s · decreases: %s · uncertain net: %s · observed net: %s\n", utils.FormatSize(report.IncreasedBytes), utils.FormatSize(report.DecreasedBytes), utils.SignedSize(report.UncertainBytes), utils.SignedSize(report.NetBytes))
+		fmt.Fprintf(&buffer, "Net change: %s\n\n", utils.SignedSize(report.NetBytes))
 		if len(report.Changes) == 0 {
 			buffer.WriteString("No measured size changes.\n")
 		}
 		for _, change := range report.Changes {
-			scope := "direct files"
+			scope := "files"
 			if change.Scope == "subtree" {
-				scope = "subtree; saved depth limit"
+				scope = "subtree"
 			}
 			if change.Uncertain {
-				scope += "; uncertain coverage"
+				scope += " ?"
 			}
 			fmt.Fprintf(&buffer, "%12s  %s [%s]\n", change.Delta, change.Path, scope)
 		}
-		buffer.WriteString("Contributors do not overlap. Decreased allocation is not guaranteed recovered disk space.\n")
 	}
 	_, err := io.WriteString(out, buffer.String())
 	return err
