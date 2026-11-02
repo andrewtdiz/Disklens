@@ -47,22 +47,26 @@ unset MYGO_UPDATER_PRIVATE_KEY
 ## macOS identity and permissions
 
 Update signatures authenticate downloads; they do not provide a stable macOS
-app identity. Without a Developer ID certificate, builds are ad-hoc signed and
-macOS may require Full Disk Access to be granted again after updates.
+app identity. Release builds require a Developer ID Application certificate. Keep
+the same developer identity and bundle identifier across releases so macOS can retain
+permissions. Moving from the older ad-hoc releases may require one final grant.
 
-To enable certificate signing and notarization in CI, add these repository secrets:
+Configure these repository secrets for signing; the Apple account credentials
+add notarization:
 
 | Secret | Value |
 | --- | --- |
 | `MACOS_CERTIFICATE` | Base64-encoded Developer ID Application `.p12`, including its private key |
 | `MACOS_CERTIFICATE_PASSWORD` | Password for the `.p12` |
 | `MACOS_SIGNING_IDENTITY` | Full `Developer ID Application: Name (TEAMID)` identity |
-| `APPLE_ID` | Apple developer account email |
-| `APPLE_TEAM_ID` | Developer team ID |
+| `APPLE_ID` | Apple developer account email (notarization) |
+| `APPLE_TEAM_ID` | Developer team ID (notarization) |
 | `APPLE_APP_PASSWORD` | App-specific password for notarization |
 
-The workflow imports the certificate into a temporary runner keychain. Without
-these credentials, it emits a warning and produces ad-hoc builds for review.
+The workflow imports the certificate into a temporary runner keychain and removes
+it after the build. Missing signing credentials fail the Mac build. Without
+`APPLE_APP_PASSWORD`, releases are Developer ID signed but not notarized. Local
+builds remain ad-hoc unless a signing identity is passed with `-sign`.
 
 See [MyGo auto-updates](https://mygo.egoist.dev/docs/updates) for signing,
 delta updates, and release manifest details.

@@ -82,11 +82,12 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          if [ -z "$MACOS_CERTIFICATE" ]; then
-            echo "::warning::No Developer ID certificate configured; macOS builds will be ad-hoc signed."
-            exit 0
-          fi
-          : "${MACOS_CERTIFICATE_PASSWORD:?}" "${MACOS_SIGNING_IDENTITY:?}" "${APPLE_ID:?}" "${APPLE_TEAM_ID:?}" "${APPLE_APP_PASSWORD:?}"
+          umask 077
+          : "${MACOS_CERTIFICATE:?}" "${MACOS_CERTIFICATE_PASSWORD:?}" "${MACOS_SIGNING_IDENTITY:?}"
+          case "$MACOS_SIGNING_IDENTITY" in
+            "Developer ID Application: "*) ;;
+            *) echo "::error::A Developer ID Application signing identity is required."; exit 1 ;;
+          esac
           signing_keychain="$RUNNER_TEMP/disklens-signing.keychain-db"
           signing_password="$(openssl rand -base64 24)"
           echo "::add-mask::$signing_password"
@@ -98,18 +99,22 @@ jobs:
           rm "$RUNNER_TEMP/certificate.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$signing_password" "$signing_keychain" > /dev/null
           security list-keychains -d user -s "$signing_keychain" login.keychain
-          xcrun notarytool store-credentials disklens --keychain "$signing_keychain" \
-            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          if [ -n "$APPLE_APP_PASSWORD" ]; then
+            : "${APPLE_ID:?}" "${APPLE_TEAM_ID:?}"
+            xcrun notarytool store-credentials disklens --keychain "$signing_keychain" \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          else
+            echo "::warning::Developer ID signing is enabled; notarization credentials are not configured."
+          fi
           export DISKLENS_SIGNING_KEYCHAIN="$signing_keychain"
           python3 - <<'PY'
           import json, os
           from pathlib import Path
           p = Path('mygo.json')
           config = json.loads(p.read_text())
-          config['macos'] = {
-              'signingIdentity': os.environ['MACOS_SIGNING_IDENTITY'],
-              'notarize': {'keychainProfile': 'disklens', 'keychain': os.environ['DISKLENS_SIGNING_KEYCHAIN']},
-          }
+          config['macos'] = {'signingIdentity': os.environ['MACOS_SIGNING_IDENTITY']}
+          if os.environ.get('APPLE_APP_PASSWORD'):
+              config['macos']['notarize'] = {'keychainProfile': 'disklens', 'keychain': os.environ['DISKLENS_SIGNING_KEYCHAIN']}
           p.write_text(json.dumps(config, indent=2) + '\n')
           PY
       - name: Build signed updates and upload to draft
@@ -118,3 +123,11 @@ jobs:
           MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
           DISKLENS_PLATFORMS: ${{ matrix.platform }}
         run: go run github.com/egoist/mygo/cmd/mygo@v0.7.3 build -platform "$DISKLENS_PLATFORMS" -upload
+      - name: Remove temporary signing keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          signing_keychain="$RUNNER_TEMP/disklens-signing.keychain-db"
+          if [ -f "$signing_keychain" ]; then
+            security delete-keychain "$signing_keychain"
+          fi
