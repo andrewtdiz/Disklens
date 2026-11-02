@@ -12,7 +12,7 @@ On Windows, run the release's setup `.exe`. It installs the desktop app; add its
 
 1. Choose a folder and click **Refresh** (`Ctrl+R` / `Cmd+R`). The first saved scan becomes your baseline.
 2. Refresh later to compare changes in the directory tree and treemap.
-3. **Set baseline** replaces your reference explicitly. A `?` beside a change means scan coverage is incomplete; hover for details.
+3. **Set baseline** replaces your reference explicitly. Hover over a change for scan coverage details.
 
 | Control | Behavior |
 | --- | --- |

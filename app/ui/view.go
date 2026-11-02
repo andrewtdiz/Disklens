@@ -41,6 +41,9 @@ func (a *app) view(c *ui.Context) {
 	ui.Column(c).Fill().Background(c.Theme().Background).Children(func() {
 		a.toolbar(c)
 		ui.SplitVerticalPercent(c, &a.split, func() { a.tree(c) }, func() { a.mapView(c) }).Grow(1)
+		if a.busy || a.deleting {
+			a.progressBar(c)
+		}
 	})
 	if a.cleanupPending && !a.busy {
 		a.cleanupPending = false
@@ -57,6 +60,38 @@ func (a *app) view(c *ui.Context) {
 	if a.busy || a.deleting || a.deleteConfirm {
 		c.After(100 * time.Millisecond)
 	}
+}
+
+func (a *app) progressBar(c *ui.Context) {
+	p := a.scanProgress
+	value, label := p.Fraction, "Scanning"
+	if a.deleting {
+		label = "Deleting"
+	}
+	if p.Phase != "Scanning" && p.Phase != "Reading NTFS" && p.Total == 0 {
+		value = -1
+		label = "Finishing"
+		if p.Phase == "Setting baseline" {
+			label = "Setting baseline"
+		}
+	}
+	ui.Row(c.Key("scan-status")).Height(32).Padding(0, 16).Gap(12).AlignItems(ui.Center).Children(func() {
+		ui.Text(c.Key("scan-progress"), label).FontSize(11).SingleLine()
+		previous := c.Theme()
+		progressTheme := *previous
+		progressTheme.Accent = ui.Hex("#60a5fa")
+		c.SetTheme(&progressTheme)
+		ui.Progress(c.Key("scan-meter"), value).Grow(1).Height(8).Tooltip(p.Path)
+		c.SetTheme(previous)
+		if value >= 0 {
+			percent := fmt.Sprintf("~%.0f%%", min(value*100, 99))
+			if p.Phase == "Reading NTFS" || p.Total > 0 {
+				percent = fmt.Sprintf("%.0f%%", value*100)
+			}
+			ui.Text(c.Key("scan-percent"), percent).FontSize(11).Width(42).SingleLine()
+		}
+		ui.Text(c, time.Since(a.scanStarted).Truncate(time.Second).String()).FontSize(11).Width(55).SingleLine()
+	})
 }
 
 func (a *app) toolbar(c *ui.Context) {
@@ -201,7 +236,7 @@ func (a *app) cell(c *ui.Context, n *utils.Node, col int) {
 				label = n.FullPath()
 			}
 			if n.Removed && n.Uncertain {
-				label += "  (?)"
+				label += "  (unavailable)"
 			} else if n.Removed {
 				label += "  (removed)"
 			}
@@ -236,12 +271,11 @@ func (a *app) cell(c *ui.Context, n *utils.Node, col int) {
 		if n.Compared && n.Delta != 0 {
 			color = changeColor(n.Delta)
 		}
-		label := utils.FormatDelta(n)
+		hint := "Includes subfolders."
 		if n.Uncertain && n.Compared {
-			label += " ?"
-			color = c.Theme().TextMuted
+			hint = "Incomplete scan. This change may include unreadable files."
 		}
-		ui.Text(c, label).TextColor(color).SingleLine().Tooltip("Includes subfolders. ? = incomplete scan.")
+		ui.Text(c, utils.FormatDelta(n)).TextColor(color).SingleLine().Tooltip(hint)
 	case 4:
 		ui.Text(c, n.Modified.Time().Format("1/2/2006  3:04 PM")).SingleLine()
 	}
