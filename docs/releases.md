@@ -51,8 +51,7 @@ app identity. Release builds require a Developer ID Application certificate. Kee
 the same developer identity and bundle identifier across releases so macOS can retain
 permissions. Moving from the older ad-hoc releases may require one final grant.
 
-Configure these repository secrets for signing; the Apple account credentials
-add notarization:
+Configure these repository secrets for signing and notarization:
 
 | Secret | Value |
 | --- | --- |
@@ -64,9 +63,8 @@ add notarization:
 | `APPLE_APP_PASSWORD` | App-specific password for notarization |
 
 The workflow imports the certificate into a temporary runner keychain and removes
-it after the build. Missing signing credentials fail the Mac build. Without
-`APPLE_APP_PASSWORD`, releases are Developer ID signed but not notarized. Local
-builds remain ad-hoc unless a signing identity is passed with `-sign`.
+it after the build. Missing signing or notarization credentials fail the Mac build.
+Local builds remain ad-hoc unless a signing identity is passed with `-sign`.
 
 See [MyGo auto-updates](https://mygo.egoist.dev/docs/updates) for signing,
 delta updates, and release manifest details.

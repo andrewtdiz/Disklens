@@ -83,7 +83,7 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           umask 077
-          : "${MACOS_CERTIFICATE:?}" "${MACOS_CERTIFICATE_PASSWORD:?}" "${MACOS_SIGNING_IDENTITY:?}"
+          : "${MACOS_CERTIFICATE:?}" "${MACOS_CERTIFICATE_PASSWORD:?}" "${MACOS_SIGNING_IDENTITY:?}" "${APPLE_ID:?}" "${APPLE_TEAM_ID:?}" "${APPLE_APP_PASSWORD:?}"
           case "$MACOS_SIGNING_IDENTITY" in
             "Developer ID Application: "*) ;;
             *) echo "::error::A Developer ID Application signing identity is required."; exit 1 ;;
@@ -99,13 +99,8 @@ jobs:
           rm "$RUNNER_TEMP/certificate.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$signing_password" "$signing_keychain" > /dev/null
           security list-keychains -d user -s "$signing_keychain" login.keychain
-          if [ -n "$APPLE_APP_PASSWORD" ]; then
-            : "${APPLE_ID:?}" "${APPLE_TEAM_ID:?}"
-            xcrun notarytool store-credentials disklens --keychain "$signing_keychain" \
-              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
-          else
-            echo "::warning::Developer ID signing is enabled; notarization credentials are not configured."
-          fi
+          xcrun notarytool store-credentials disklens --keychain "$signing_keychain" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
           export DISKLENS_SIGNING_KEYCHAIN="$signing_keychain"
           python3 - <<'PY'
           import json, os
@@ -113,8 +108,7 @@ jobs:
           p = Path('mygo.json')
           config = json.loads(p.read_text())
           config['macos'] = {'signingIdentity': os.environ['MACOS_SIGNING_IDENTITY']}
-          if os.environ.get('APPLE_APP_PASSWORD'):
-              config['macos']['notarize'] = {'keychainProfile': 'disklens', 'keychain': os.environ['DISKLENS_SIGNING_KEYCHAIN']}
+          config['macos']['notarize'] = {'keychainProfile': 'disklens', 'keychain': os.environ['DISKLENS_SIGNING_KEYCHAIN']}
           p.write_text(json.dumps(config, indent=2) + '\n')
           PY
       - name: Build signed updates and upload to draft
